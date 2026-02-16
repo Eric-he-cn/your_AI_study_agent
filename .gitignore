@@ -41,10 +41,14 @@ venv.bak/
 # Data
 data/workspaces/
 *.pdf
-*.txt
-*.md
+
+# Documentation files should be included
 !README.md
-!*.example.md
+!USAGE.md
+!ARCHITECTURE.md
+!CONTRIBUTING.md
+!tests/*.txt
+!tests/*.md
 
 # Logs
 *.log
