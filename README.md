@@ -102,8 +102,9 @@ FastAPI (:8000)
 
 ```
 
-├── README_v2.md              ← 本文档
-├── USAGE_v2.md               ← 使用手册（面向用户）
+├── README.md                 ← 本文档
+├── USAGE.md                  ← 使用手册（面向用户）
+├── debug.md                  ← 调试过程记录
 ├── requirements.txt
 ├── pyproject.toml
 ├── .env                      ← 本地环境变量（不入库）
