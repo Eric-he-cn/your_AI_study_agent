@@ -295,12 +295,19 @@ if st.session_state.current_course:
             
             # Display citations if available
             if msg.get("citations"):
-                with st.expander("📑 查看引用"):
+                with st.expander(f"📑 查看引用来源（共 {len(msg['citations'])} 条）"):
                     for i, citation in enumerate(msg["citations"]):
-                        st.markdown(f"**引用 {i+1}**: {citation['doc_id']}")
-                        if citation.get("page"):
-                            st.markdown(f"页码: {citation['page']}")
-                        st.text(citation["text"][:200] + "..." if len(citation["text"]) > 200 else citation["text"])
+                        page_str = f"  第 {citation['page']} 页" if citation.get("page") else ""
+                        score_str = f"  相关度 {citation['score']:.2f}" if citation.get("score") is not None else ""
+                        st.markdown(
+                            f"**[来源{i+1}]** `{citation['doc_id']}`{page_str}{score_str}"
+                        )
+                        preview = citation["text"][:300].replace("\n", " ").strip()
+                        if len(citation["text"]) > 300:
+                            preview += "…"
+                        st.caption(preview)
+                        if i < len(msg["citations"]) - 1:
+                            st.divider()
             
             # Display tool calls if available
             if msg.get("tool_calls"):
@@ -333,10 +340,13 @@ if st.session_state.current_course:
             )
         
         if full_response:
+            # 捕获流式过程中拦截到的 citations
+            citations = st.session_state.pop("_pending_citations", None) or None
             # 把完整回答加入对话历史（存储时转换定界符，方便后续重渲染）
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": fix_latex(full_response),
+                "citations": citations,
             })
         
         st.rerun()

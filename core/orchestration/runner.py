@@ -463,18 +463,28 @@ class OrchestrationRunner:
         plan: Plan,
         history: List[Dict[str, str]] = None
     ):
-        """流式学习模式：先检索上下文，再流式输出导师回答。"""
+        """流式学习模式：先检索上下文，再流式输出导师回答。
+
+        首先 yield 一个特殊事件 {"__citations__": [...]} 供前端捕获并展示引用框。
+        后续所有 yield 均为文本 chunk。
+        """
         if history is None:
             history = []
 
         context = ""
+        citations_dicts = []
         if plan.need_rag:
             retriever = self.load_retriever(course_name)
             if retriever:
                 chunks = retriever.retrieve(user_message)
                 context = retriever.format_context(chunks)
+                citations_dicts = [c.model_dump() for c in chunks]
             else:
                 context = "（未找到相关教材，请先上传课程资料）"
+
+        # 先发送 citations 事件（前端按 __citations__ key 识别，不会渲染为文本）
+        if citations_dicts:
+            yield {"__citations__": citations_dicts}
 
         workspace_path = self.get_workspace_path(course_name)
         notes_dir = os.path.abspath(os.path.join(workspace_path, "notes"))
