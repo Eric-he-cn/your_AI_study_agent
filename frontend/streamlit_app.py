@@ -332,6 +332,7 @@ if st.session_state.current_course:
         # 流式输出助手回答
         # 单独收集文本，避免依赖 st.write_stream 返回类型（新版 Streamlit 返回 StreamingOutput 而非 str）
         collected_chunks: list[str] = []
+        st.session_state._pending_citations = []  # 在流开始前初始化
 
         def _collecting_stream():
             for chunk in stream_chat(
@@ -339,6 +340,10 @@ if st.session_state.current_course:
                 st.session_state.current_mode,
                 user_input,
             ):
+                # 拦截 citations 元数据事件，不渲染到气泡，仅存于 session_state
+                if isinstance(chunk, dict) and "__citations__" in chunk:
+                    st.session_state._pending_citations = chunk["__citations__"]
+                    continue  # 跳过 yield，防止 st.write_stream 把 dict 渲染成乱码
                 if isinstance(chunk, str):
                     collected_chunks.append(chunk)
                 yield chunk
