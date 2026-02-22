@@ -32,6 +32,105 @@ FastAPI version 0.109.0 and earlier contained a Regular Expression Denial of Ser
 
 ---
 
+### 2. Chat History Duplication & Data Leakage (MEDIUM)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: MEDIUM  
+
+**Description**:
+Frontend was appending the current user message to session history **before** sending to API, then the backend persisted the full history including that duplicate entry. In streaming mode the duplication was doubled. This caused growing duplicate records and exposed prior-session context unintentionally.
+
+**Fix Applied**:
+- `frontend/streamlit_app.py`: history slice changed to `chat_history[-21:-1]` (excludes the current message, caps at 20 turns)
+
+---
+
+### 3. Practice/Exam Record Wrong User Answer (MEDIUM)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: MEDIUM  
+
+**Description**:
+`_save_practice_record` and `_save_exam_record` were extracting the user answer from `history[-1]` after history had already been mutated, causing the wrong message to be stored in practice/exam records.
+
+**Fix Applied**:
+- `core/orchestration/runner.py`: added explicit `user_message` parameter to both save methods; all 4 call sites updated.
+
+---
+
+### 4. File Upload Path Traversal (HIGH)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: HIGH  
+
+**Description**:
+`upload_document()` accepted raw filenames from the client, allowing an attacker to upload a file with a name like `../../etc/passwd` and overwrite arbitrary files on the server.
+
+**Fix Applied**:
+- `backend/api.py`: `safe_name = os.path.basename(file.filename)` before constructing the target path.
+- File type whitelist extended to `{".pdf", ".txt", ".md", ".docx", ".pptx", ".ppt"}`.
+
+---
+
+### 5. Course Name Path Traversal (HIGH)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: HIGH  
+
+**Description**:
+`get_workspace_path(course_name)` used the caller-supplied course name directly in `os.path.join`, allowing traversal via names such as `../../../tmp/evil`.
+
+**Fix Applied**:
+- `core/orchestration/runner.py`: `get_workspace_path()` applies `os.path.basename(course_name.strip())` and raises `ValueError` if the result is `.` or `..`.
+
+---
+
+### 6. chunk.py Infinite Loop on Large Overlap (MEDIUM)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: MEDIUM  
+
+**Description**:
+When `overlap >= chunk_size`, the sliding-window loop in `simple_chunk_text()` computed `next_start <= start`, causing an infinite loop that hung the ingest pipeline.
+
+**Fix Applied**:
+- `rag/chunk.py`: guard `if overlap >= chunk_size: overlap = chunk_size // 2`; loop has `if next_start <= start: break` backstop.
+
+---
+
+### 7. TXT Parser Single-Encoding Failure (LOW)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: LOW  
+
+**Description**:
+`parse_txt()` attempted only UTF-8 decoding. Files encoded with GBK, BOM UTF-8, or Latin-1 raised `UnicodeDecodeError` and silently returned empty content.
+
+**Fix Applied**:
+- `rag/ingest.py`: `parse_txt()` now tries `utf-8-sig → utf-8 → gbk → latin-1` in order, raising only if all fail.
+
+---
+
+### 8. FAISS os.chdir() Thread-Safety (HIGH)
+
+**Discovered**: 2025-07-14  
+**Fixed**: 2025-07-14  
+**Severity**: HIGH  
+
+**Description**:
+`store_faiss.py` changed the process working directory (`os.chdir`) inside `save()` and `load()` without any synchronisation. Under concurrent FastAPI requests this corrupted relative paths for other threads.
+
+**Fix Applied**:
+- `rag/store_faiss.py`: module-level `_faiss_chdir_lock = threading.Lock()`; both `save()` and `load()` wrap the `os.chdir()` region with `with _faiss_chdir_lock:`.
+
+---
+
 ## 🛡️ Security Measures Implemented
 
 ### 1. Environment Variable Protection
@@ -53,11 +152,14 @@ result = eval(expression, {"__builtins__": {}}, {})
 ```
 
 ### 3. File Upload Security
-- ✅ File type validation (PDF, TXT, MD only)
+- ✅ File type whitelist validation (PDF, TXT, MD, DOCX, PPTX, PPT)
+- ✅ `os.path.basename()` enforced on file names to prevent path traversal
+- ✅ Course name sanitized with `basename()` — rejects `.` and `..`
 - ✅ Files stored in isolated workspace directories
 - ✅ No arbitrary file path access
 
-**Location**: `backend/api.py` - `upload_document()`
+**Location**: `backend/api.py` - `upload_document()`  
+**Path traversal guard**: `core/orchestration/runner.py` - `get_workspace_path()`
 
 ### 4. Data Isolation
 - ✅ Each course has separate workspace
@@ -79,7 +181,8 @@ result = eval(expression, {"__builtins__": {}}, {})
 - [x] fastapi: >=0.109.1 ✅ (patched)
 - [x] uvicorn: 0.27.0 ✅ (no known issues)
 - [x] streamlit: 1.31.0 ✅ (no known issues)
-- [x] openai: 1.12.0 ✅ (no known issues)
+- [x] openai: 2.21.0 ✅ (upgraded from 1.12.0)
+- [x] faiss-cpu: 1.13.2 ✅ (upgraded from 1.7.4)
 - [x] pydantic: 2.6.0 ✅ (no known issues)
 - [x] pymupdf: 1.23.0 ✅ (no known issues)
 - [x] sentence-transformers: 2.3.0 ✅ (no known issues)
@@ -96,9 +199,9 @@ result = eval(expression, {"__builtins__": {}}, {})
 ## 🚨 Known Limitations
 
 ### 1. WebSearch Tool
-**Status**: Currently simulated  
+**Status**: Real SerpAPI integration (falls back to placeholder if `SERP_API_KEY` not set)  
 **Security Impact**: Low  
-**Note**: Real implementation should validate and sanitize search queries
+**Note**: Validate and sanitize search queries before passing to external API in production
 
 ### 2. LLM Input
 **Status**: User input sent directly to LLM  
@@ -138,6 +241,14 @@ Before deploying to production, ensure:
 
 | Date | Version | Change | Severity |
 |------|---------|--------|----------|
+| 2025-07-14 | 0.3.0 | Upgraded openai 1.12→2.21.0, faiss-cpu 1.7.4→1.13.2, numpy pinned >=1.25,<2.0 | MEDIUM |
+| 2025-07-14 | 0.2.6 | Fixed FAISS `os.chdir()` thread-safety with `threading.Lock` | HIGH |
+| 2025-07-14 | 0.2.5 | Fixed course-name path traversal via `get_workspace_path(basename)` | HIGH |
+| 2025-07-14 | 0.2.4 | Fixed file-upload path traversal via `os.path.basename()` + whitelist | HIGH |
+| 2025-07-14 | 0.2.3 | Fixed `chunk.py` infinite loop on `overlap >= chunk_size` | MEDIUM |
+| 2025-07-14 | 0.2.2 | Fixed TXT parser single-encoding failure; added utf-8-sig/gbk/latin-1 fallback | LOW |
+| 2025-07-14 | 0.2.1 | Fixed practice/exam record saving wrong user answer (`user_message` param) | MEDIUM |
+| 2025-07-14 | 0.2.0 | Fixed chat history duplication (`[-21:-1]` slice) and data leakage risk | MEDIUM |
 | 2024-02-16 | 0.1.1 | Fixed FastAPI ReDoS vulnerability | HIGH |
 | 2024-02-16 | 0.1.0 | Initial MVP release | - |
 
@@ -163,7 +274,7 @@ If you discover a security vulnerability, please:
 - ✅ Safe for development and testing
 - ⚠️ Additional hardening recommended for production
 
-**Last Updated**: 2024-02-16  
+**Last Updated**: 2025-07-14  
 **Next Review**: Recommended after any dependency updates
 
 ---

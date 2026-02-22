@@ -188,6 +188,42 @@ class OrchestrationRunner:
         pass
 ```
 
+### 添加新文档格式支持
+
+1. 在 `rag/ingest.py` 添加解析函数：
+
+```python
+def parse_myformat(filepath: str) -> List[Dict]:
+    """Parse .myext files. Returns list of {text, page}."""
+    pages = []
+    # ... 解析逻辑 ...
+    pages.append({"text": content, "page": i + 1})
+    return pages
+```
+
+2. 在 `parse_document()` 中注册扩展名：
+
+```python
+elif ext == ".myext":
+    return parse_myformat(filepath)
+```
+
+3. 在 `backend/api.py` 的 `ALLOWED_EXTENSIONS` 中添加：
+
+```python
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".pptx", ".ppt", ".myext"}
+```
+
+4. 在 `frontend/streamlit_app.py` 的 `st.file_uploader` 中添加类型：
+
+```python
+st.file_uploader(..., type=["pdf","txt","md","docx","pptx","ppt","myext"])
+```
+
+5. 如需额外依赖，更新 `requirements.txt` 并在 PR 描述中说明原因。
+
+---
+
 ### 添加新工具
 
 在 `mcp_tools/client.py` 添加新方法：

@@ -57,13 +57,13 @@
 
 **流程**:
 ```
-PDF/TXT/MD → 解析 → 分块 → Embedding → FAISS 索引
+PDF/TXT/MD/DOCX/PPTX/PPT → 解析 → 分块 → Embedding → FAISS 索引
                                           ↓
 用户查询 → Embedding → 相似度检索 → Top-K 结果 → 带引用的上下文
 ```
 
 **关键文件**:
-- `ingest.py`: 文档解析 (支持 PDF, TXT, MD)
+- `ingest.py`: 文档解析 (支持 PDF, TXT, MD, DOCX, PPTX, PPT)
 - `chunk.py`: 文本分块 (滑窗 + overlap)
 - `embed.py`: 向量嵌入 (Sentence Transformers)
 - `store_faiss.py`: FAISS 向量存储
@@ -99,7 +99,7 @@ PDF/TXT/MD → 解析 → 分块 → Embedding → FAISS 索引
 
 **工具集**:
 1. **Calculator**: 数学表达式计算
-2. **WebSearch**: 网页搜索（模拟）
+2. **WebSearch**: 网页搜索（SerpAPI；未配置时返回提示）
 3. **FileWriter**: 文件读写（笔记、错题本）
 
 **工具策略** (policies.py):
@@ -204,7 +204,8 @@ data/workspaces/
     ├── uploads/                    # 原始文档
     │   ├── 教材第一章.pdf
     │   ├── 教材第二章.pdf
-    │   └── 课堂讲义.txt
+    │   ├── 课堂讲义.txt
+    │   └── 思维导图.pptx
     ├── index/                      # 向量索引
     │   ├── faiss_index.faiss       # FAISS 索引文件
     │   └── faiss_index.pkl         # 文档块元数据
@@ -212,6 +213,8 @@ data/workspaces/
     │   └── 2024-02-16-summary.md
     ├── mistakes/                   # 错题本
     │   └── mistakes.jsonl          # 每行一个错题记录
+    ├── practices/                  # 练习记录
+    │   └── practice-2024-02-16.json
     └── exams/                      # 考试记录
         └── exam-2024-02-16.json
 ```
@@ -340,9 +343,11 @@ CMD ["python", "backend/api.py"]
 ## 🔒 安全考虑
 
 1. **API Key 保护**: 使用环境变量，不提交到代码库
-2. **文件上传限制**: 限制文件大小和类型
-3. **表达式执行**: Calculator 使用安全的 eval
-4. **数据隔离**: 每个课程独立工作空间
+2. **文件上传限制**: 白名单类型（PDF/TXT/MD/DOCX/PPTX/PPT），`basename()` 防路径穿越
+3. **表达式执行**: Calculator 使用限定命名空间的 `eval`，无内建函数
+4. **数据隔离**: 每个课程独立工作空间，课程名经 `basename()` 清洗
+5. **FAISS 线程安全**: 模块级 `threading.Lock` 保护 `os.chdir()` 区域
+6. **历史截断**: 对话历史仅取最近 20 条，防止 token 爆炸与数据泄漏
 
 ## 📚 学习建议
 
