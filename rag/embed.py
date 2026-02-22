@@ -3,23 +3,81 @@ import os
 from typing import List
 from sentence_transformers import SentenceTransformer
 import numpy as np
+import torch
+
+# BGE 系列检索模型在 encode 查询时需要加指令前缀（文档片段不需要）。
+# bge-*-zh-*  → 中文指令前缀
+# bge-m3      → 无需前缀（模型内置多语言 instruction tuning）
+_BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
+
+
+def _get_bge_query_prefix(model_name: str) -> str:
+    """Return the query instruction prefix for BGE models, or empty string."""
+    name = model_name.lower()
+    if "bge-m3" in name:
+        return ""          # bge-m3 不需要前缀
+    if "bge" in name and ("zh" in name or "chinese" in name):
+        return _BGE_ZH_QUERY_INSTRUCTION
+    return ""
+
+
+def _select_device() -> str:
+    """自动选择计算设备。
+
+    优先读取 EMBEDDING_DEVICE 环境变量：
+      - "auto" (默认) → 有 CUDA 用 cuda:0，否则 cpu
+      - "cuda" / "cuda:0" → 强制使用 GPU
+      - "cpu"             → 强制使用 CPU
+    """
+    env = os.getenv("EMBEDDING_DEVICE", "auto").strip().lower()
+    if env != "auto":
+        return env
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"[Embed] 使用 GPU: {gpu_name}")
+        return "cuda"
+    print("[Embed] 未检测到 CUDA，使用 CPU")
+    return "cpu"
 
 
 class EmbeddingModel:
-    """Sentence transformer embedding model."""
-    
+    """Sentence transformer embedding model.
+
+    Supports BGE series (bge-base-zh-v1.5, bge-m3, etc.) with automatic
+    query instruction prefix injection for asymmetric retrieval.
+    Auto-selects GPU (CUDA) when available, falls back to CPU.
+    """
+
     def __init__(self, model_name: str = None):
         if model_name is None:
-            model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-        self.model = SentenceTransformer(model_name)
-    
+            model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-zh-v1.5")
+        self.model_name = model_name
+        self._device = _select_device()
+        self.model = SentenceTransformer(model_name, device=self._device)
+        self._query_prefix = _get_bge_query_prefix(model_name)
+        # GPU 单次可处理更大 batch；CPU 保持默认 32
+        _default_bs = "256" if "cuda" in self._device else "32"
+        self._batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", _default_bs))
+        print(f"[Embed] 模型={model_name}  设备={self._device}  batch_size={self._batch_size}")
+
     def embed(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings for texts."""
-        return self.model.encode(texts, show_progress_bar=False)
-    
+        """Generate embeddings for document chunks (no prefix)."""
+        return self.model.encode(
+            texts,
+            batch_size=self._batch_size,
+            show_progress_bar=len(texts) > 100,
+            normalize_embeddings=True,
+        )
+
     def embed_query(self, query: str) -> np.ndarray:
-        """Generate embedding for a single query."""
-        return self.model.encode([query], show_progress_bar=False)[0]
+        """Generate embedding for a query (with BGE instruction prefix if needed)."""
+        prefixed = self._query_prefix + query if self._query_prefix else query
+        return self.model.encode(
+            [prefixed],
+            batch_size=1,
+            show_progress_bar=False,
+            normalize_embeddings=True,
+        )[0]
 
 
 # Global embedding model
