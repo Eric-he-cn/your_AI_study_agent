@@ -330,14 +330,23 @@ if st.session_state.current_course:
             st.markdown(user_input)
         
         # 流式输出助手回答
+        # 单独收集文本，避免依赖 st.write_stream 返回类型（新版 Streamlit 返回 StreamingOutput 而非 str）
+        collected_chunks: list[str] = []
+
+        def _collecting_stream():
+            for chunk in stream_chat(
+                st.session_state.current_course,
+                st.session_state.current_mode,
+                user_input,
+            ):
+                if isinstance(chunk, str):
+                    collected_chunks.append(chunk)
+                yield chunk
+
         with st.chat_message("assistant"):
-            full_response = st.write_stream(
-                stream_chat(
-                    st.session_state.current_course,
-                    st.session_state.current_mode,
-                    user_input,
-                )
-            )
+            st.write_stream(_collecting_stream())
+
+        full_response = "".join(collected_chunks)
         
         if full_response:
             # 捕获流式过程中拦截到的 citations
