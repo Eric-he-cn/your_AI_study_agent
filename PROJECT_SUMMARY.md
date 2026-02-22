@@ -62,11 +62,11 @@ your_AI_study_agent/
 ```
 
 **支持的功能**:
-- ✅ PDF/TXT/MD 文档解析
-- ✅ 智能分块（512 字符 + 50 重叠）
-- ✅ Sentence Transformers 嵌入
-- ✅ FAISS 向量检索
-- ✅ Top-K 相似度匹配
+- ✅ PDF/TXT/MD/DOCX/PPTX/PPT 文档解析
+- ✅ 智能分块（600 字符 + 120 重叠，含 overlap 越界保护）
+- ✅ BAAI/bge-base-zh-v1.5 嵌入（中文优化，768 维，GPU auto-detect）
+- ✅ FAISS 向量检索（线程安全，os.chdir 锁保护）
+- ✅ Top-6 相似度匹配
 - ✅ 引用溯源（文档名 + 页码）
 
 ### 3. Multi-Agent 系统 ✅

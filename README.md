@@ -30,7 +30,8 @@
 ### RAG 知识库
 
 - 支持 **PDF / TXT / MD / DOCX / PPTX / PPT** 六种格式
-- 文本分块 + FAISS 向量索引（嵌入模型：`all-MiniLM-L6-v2`）
+- 文本分块 + FAISS 向量索引（嵌入模型：`BAAI/bge-base-zh-v1.5`，专为中文优化）
+- GPU 自动加速：有 NVIDIA GPU 时自动使用 CUDA，batch_size 256；无 GPU 退回 CPU
 - TXT/MD 文件自动检测编码（UTF-8 → GBK → Latin-1 回退）
 - 检索结果携带文档名、页码、相关度分数
 
@@ -175,10 +176,12 @@ OPENAI_BASE_URL=https://api.deepseek.com      # 或 https://api.openai.com/v1
 DEFAULT_MODEL=deepseek-chat                   # 或 gpt-4o 等
 
 # RAG（可选，均有默认值）
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-CHUNK_SIZE=512
-CHUNK_OVERLAP=50
-TOP_K_RESULTS=3
+EMBEDDING_MODEL=BAAI/bge-base-zh-v1.5   # 中文优化嵌入模型
+EMBEDDING_DEVICE=auto                   # auto/cuda/cpu
+EMBEDDING_BATCH_SIZE=256                # GPU 推荐 128-512；CPU 推荐 32
+CHUNK_SIZE=600
+CHUNK_OVERLAP=120
+TOP_K_RESULTS=6
 
 # MCP（可选）
 SERPAPI_API_KEY=your_serpapi_key
@@ -209,10 +212,12 @@ streamlit run frontend/streamlit_app.py   # 端口 8501
 | `OPENAI_API_KEY` | ✅ | — | LLM API 密钥 |
 | `OPENAI_BASE_URL` | ✅ | `https://api.openai.com/v1` | API 基础 URL |
 | `DEFAULT_MODEL` | — | `gpt-3.5-turbo` | 对话模型名称 |
-| `EMBEDDING_MODEL` | — | `all-MiniLM-L6-v2` | 嵌入模型（HuggingFace Hub ID） |
-| `CHUNK_SIZE` | — | `512` | 文本分块大小（字符数） |
-| `CHUNK_OVERLAP` | — | `50` | 分块重叠大小（需 < CHUNK_SIZE） |
-| `TOP_K_RESULTS` | — | `3` | 每次检索返回的最大块数 |
+| `EMBEDDING_MODEL` | — | `BAAI/bge-base-zh-v1.5` | 嵌入模型（HuggingFace Hub ID） |
+| `EMBEDDING_DEVICE` | — | `auto` | 计算设备：`auto` / `cuda` / `cpu` |
+| `EMBEDDING_BATCH_SIZE` | — | `256`（GPU）/ `32`（CPU） | encode batch 大小 |
+| `CHUNK_SIZE` | — | `600` | 文本分块大小（字符数） |
+| `CHUNK_OVERLAP` | — | `120` | 分块重叠大小（需 < CHUNK_SIZE，建议 20%） |
+| `TOP_K_RESULTS` | — | `6` | 每次检索返回的最大块数 |
 | `SERPAPI_API_KEY` | — | — | SerpAPI 密钥（学习模式网页搜索） |
 | `DATA_DIR` | — | `data/workspaces` | 课程数据根目录 |
 
@@ -262,8 +267,9 @@ SSE 每帧格式：`data: <JSON字符串>\n\n`，需 `json.loads()` 解码。
 | 前端 | Streamlit 1.31 |
 | 后端 | FastAPI 0.109 + Uvicorn |
 | LLM | OpenAI SDK 兼容（DeepSeek / OpenAI / 本地 Ollama） |
-| 嵌入 | sentence-transformers `all-MiniLM-L6-v2` |
-| 向量库 | FAISS CPU |
+| 嵌入 | sentence-transformers `BAAI/bge-base-zh-v1.5`（中文，768 维） |
+| 嵌入加速 | PyTorch CUDA 12.8（GPU auto-detect；CPU fallback） |
+| 向量库 | FAISS（CPU / GPU 自动选择） |
 | 文档解析 | PyMuPDF（PDF）、python-docx（DOCX）、python-pptx（PPTX）、pywin32+PowerPoint（PPT） |
 | 数据校验 | Pydantic v2 |
 | 工具搜索 | SerpAPI |
@@ -284,8 +290,12 @@ SSE 每帧格式：`data: <JSON字符串>\n\n`，需 `json.loads()` 解码。
 ## 已知限制
 - 扫描版 PDF（图片）需先 OCR，当前不支持直接提取文字。
 - `.ppt` 解析依赖本机安装 Microsoft PowerPoint（通过 COM 转换到 `.pptx`）。
-- `all-MiniLM-L6-v2` 中文效果一般，可换为 `paraphrase-multilingual-MiniLM-L12-v2` 等多语模型。
-- FAISS CPU 在 >100 万向量时性能下降，需考虑 GPU 或分片方案。
+- 嵌入模型默认 `BAAI/bge-base-zh-v1.5`（中文优化，768 维）；中英混排教材可换 `BAAI/bge-m3`（多语言，更慢）。
+- 更换嵌入模型后需运行 `python rebuild_indexes.py` 重建所有课程索引（维度变化时旧索引不兼容）。
+- 扫描版 PDF（图片）需先 OCR，当前不支持直接提取文字。
+- `.ppt` 解析依赖本机安装 Microsoft PowerPoint（通过 COM 转换到 `.pptx`）。
+- FAISS 在 >100 万向量时性能下降，需考虑分片或 HNSW 方案。
+- 设计为单机部署，多实例需额外处理索引共享与并发写。
 - 设计为单机部署，多实例需额外处理索引共享与并发写。
 
 ---

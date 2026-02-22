@@ -232,14 +232,21 @@ data/workspaces/
 
 **分块策略**:
 ```python
-chunk_size = 512      # 字符数
-overlap = 50          # 重叠字符数
+chunk_size = 600      # 字符数（中文密度高，比英文场景稍大）
+overlap = 120         # 重叠字符数（≈20%，防止术语跨块截断）
+```
+
+**嵌入策略**:
+```python
+model = "BAAI/bge-base-zh-v1.5"   # 中文专用，768 维
+device = "cuda"  # 或 "cpu"（auto-detect via torch.cuda.is_available()）
+batch_size = 256  # GPU；CPU 时降为 32
 ```
 
 **检索策略**:
 ```python
-top_k = 3            # 返回前3个最相关片段
-similarity = L2      # 使用 L2 距离
+top_k = 6            # 返回前6个最相关片段（覆盖率更高）
+similarity = L2      # 使用 L2 距离（normalize_embeddings=True 等价余弦）
 ```
 
 ### 2. Prompt Engineering
