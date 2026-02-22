@@ -1,11 +1,20 @@
 """FastAPI backend for Course Learning Agent."""
 import os
+import logging
 import shutil
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
+
+# 配置日志，显示工具调用详情
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
 
 from backend.schemas import (
     CourseWorkspace, ChatRequest, ChatResponse, ChatMessage
@@ -31,6 +40,39 @@ runner = OrchestrationRunner()
 
 # In-memory workspace registry (in production, use database)
 workspaces = {}
+
+
+def load_workspaces_from_disk():
+    """启动时从磁盘扫描已有 workspace 目录恢复数据。"""
+    data_dir = os.path.abspath(runner.data_dir)
+    if not os.path.exists(data_dir):
+        return
+    for course_name in os.listdir(data_dir):
+        course_path = os.path.join(data_dir, course_name)
+        if not os.path.isdir(course_path):
+            continue
+        uploads_dir = os.path.join(course_path, "uploads")
+        documents = []
+        if os.path.exists(uploads_dir):
+            documents = [f for f in os.listdir(uploads_dir)
+                         if os.path.isfile(os.path.join(uploads_dir, f))]
+        workspaces[course_name] = CourseWorkspace(
+            course_name=course_name,
+            subject="",
+            created_at=datetime.now(),
+            documents=documents,
+            index_path=os.path.join(course_path, "index", "faiss_index"),
+            notes_path=os.path.join(course_path, "notes"),
+            mistakes_path=os.path.join(course_path, "mistakes"),
+            exams_path=os.path.join(course_path, "exams"),
+        )
+        # 确保所有子目录存在
+        for subdir in ["uploads", "index", "notes", "mistakes", "exams", "practices"]:
+            os.makedirs(os.path.join(course_path, subdir), exist_ok=True)
+
+
+# 启动时恢复
+load_workspaces_from_disk()
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -64,6 +106,7 @@ async def create_workspace(request: CreateWorkspaceRequest):
     os.makedirs(os.path.join(workspace_path, "notes"), exist_ok=True)
     os.makedirs(os.path.join(workspace_path, "mistakes"), exist_ok=True)
     os.makedirs(os.path.join(workspace_path, "exams"), exist_ok=True)
+    os.makedirs(os.path.join(workspace_path, "practices"), exist_ok=True)
     
     workspace = CourseWorkspace(
         course_name=request.course_name,
@@ -104,20 +147,32 @@ async def upload_document(
     
     workspace = workspaces[course_name]
     workspace_path = runner.get_workspace_path(course_name)
-    upload_path = os.path.join(workspace_path, "uploads", file.filename)
-    
+
+    # 安全校验：只取文件名部分，防止路径穿越
+    safe_filename = os.path.basename(file.filename or "")
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="无效的文件名")
+
+    # 文件类型白名单校验
+    allowed_exts = {".pdf", ".txt", ".md", ".docx", ".pptx", ".ppt"}
+    ext = os.path.splitext(safe_filename)[1].lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}，仅支持 pdf/txt/md/docx/pptx/ppt")
+
+    upload_path = os.path.join(workspace_path, "uploads", safe_filename)
+
     # Save file
     with open(upload_path, "wb") as f:
         content = await file.read()
         f.write(content)
     
     # Add to workspace documents
-    if file.filename not in workspace.documents:
-        workspace.documents.append(file.filename)
+    if safe_filename not in workspace.documents:
+        workspace.documents.append(safe_filename)
     
     return {
-        "message": f"File {file.filename} uploaded successfully",
-        "filename": file.filename
+        "message": f"File {safe_filename} uploaded successfully",
+        "filename": safe_filename
     }
 
 
@@ -130,33 +185,62 @@ async def build_workspace_index(course_name: str):
     workspace = workspaces[course_name]
     workspace_path = runner.get_workspace_path(course_name)
     uploads_dir = os.path.join(workspace_path, "uploads")
-    
-    # Parse all documents
-    all_pages = []
-    for doc_name in workspace.documents:
-        doc_path = os.path.join(uploads_dir, doc_name)
-        if os.path.exists(doc_path):
+
+    try:
+        # 直接扫描 uploads/ 目录，避免内存列表与磁盘不同步导致漏文件
+        allowed_exts = {".pdf", ".txt", ".md", ".docx", ".pptx", ".ppt"}
+        disk_files = []
+        if os.path.exists(uploads_dir):
+            disk_files = [
+                f for f in os.listdir(uploads_dir)
+                if os.path.isfile(os.path.join(uploads_dir, f))
+                and os.path.splitext(f)[1].lower() in allowed_exts
+            ]
+        # 回写内存，保持一致
+        workspace.documents = disk_files
+
+        if not disk_files:
+            raise HTTPException(status_code=400, detail="uploads/ 目录中没有可用文件，请先上传教材")
+
+        # Parse all documents
+        all_pages = []
+        failed = []
+        for doc_name in disk_files:
+            doc_path = os.path.join(uploads_dir, doc_name)
             pages = DocumentParser.parse_document(doc_path)
-            all_pages.extend(pages)
-    
-    if not all_pages:
-        raise HTTPException(status_code=400, detail="No documents to index")
-    
-    # Chunk documents
-    chunks = chunk_documents(all_pages)
-    
-    # Build index
-    store = build_index(chunks)
-    
-    # Save index
-    index_path = workspace.index_path
-    store.save(index_path)
-    
-    return {
-        "message": "Index built successfully",
-        "num_chunks": len(chunks),
-        "num_documents": len(workspace.documents)
-    }
+            if pages:
+                all_pages.extend(pages)
+            else:
+                failed.append(doc_name)
+
+        if not all_pages:
+            detail = "所有文件解析均未提取到文本。"
+            if failed:
+                detail += f" 解析失败的文件：{', '.join(failed)}（PDF 请确认非扫描版；PPTX 请确认文件未损坏）"
+            raise HTTPException(status_code=400, detail=detail)
+
+        # Chunk documents
+        chunks = chunk_documents(all_pages)
+
+        # Build index
+        store = build_index(chunks)
+
+        # Save index
+        index_path = os.path.abspath(workspace.index_path)
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
+        store.save(index_path)
+
+        return {
+            "message": "Index built successfully",
+            "num_chunks": len(chunks),
+            "num_documents": len(workspace.documents)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"构建索引时发生错误: {str(e)}")
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -170,7 +254,8 @@ async def chat(request: ChatRequest):
         course_name=request.course_name,
         mode=request.mode,
         user_message=request.message,
-        state={}
+        state={},
+        history=[m.model_dump() for m in request.history] if request.history else []
     )
     
     return ChatResponse(
@@ -179,10 +264,48 @@ async def chat(request: ChatRequest):
     )
 
 
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """流式聊天接口，SSE 格式逐 token 输出。chunk 用 JSON 编码防止换行符破坏 SSE 协议。"""
+    import json as _json
+    if request.course_name not in workspaces:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    history = [m.model_dump() for m in request.history] if request.history else []
+
+    def event_generator():
+        try:
+            for chunk in runner.run_stream(
+                course_name=request.course_name,
+                mode=request.mode,
+                user_message=request.message,
+                state={},
+                history=history,
+            ):
+                if chunk:
+                    # 用 JSON 序列化 chunk，换行符等特殊字符会被转义，不会破坏 SSE 行格式
+                    yield f"data: {_json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {_json.dumps(f'（生成回答时出错：{e}）', ensure_ascii=False)}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "api:app",
+        "backend.api:app",
         host=os.getenv("API_HOST", "0.0.0.0"),
         port=int(os.getenv("API_PORT", "8000")),
         reload=True

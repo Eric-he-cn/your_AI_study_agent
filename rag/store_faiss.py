@@ -1,10 +1,15 @@
 """FAISS vector store."""
 import os
 import pickle
+import threading
 from typing import List, Dict, Any, Tuple
 import faiss
 import numpy as np
 from rag.embed import get_embedding_model
+
+# Windows 下 FAISS C++ 的 fopen 不支持 Unicode 路径，只能 chdir 绕过。
+# 用全局锁确保并发请求不互相干扰 os.chdir。
+_faiss_chdir_lock = threading.Lock()
 
 
 class FAISSStore:
@@ -36,14 +41,34 @@ class FAISSStore:
     
     def save(self, path: str):
         """Save index and chunks to disk."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        faiss.write_index(self.index, f"{path}.faiss")
+        path = os.path.abspath(path)
+        index_dir = os.path.dirname(path)
+        filename = os.path.basename(path)
+        os.makedirs(index_dir, exist_ok=True)
+        # FAISS C++ 底层 fopen 在 Windows 上不支持 Unicode 路径，
+        # 切换到目标目录后用纯 ASCII 相对路径写入
+        with _faiss_chdir_lock:
+            cwd = os.getcwd()
+            try:
+                os.chdir(index_dir)
+                faiss.write_index(self.index, f"{filename}.faiss")
+            finally:
+                os.chdir(cwd)
         with open(f"{path}.pkl", 'wb') as f:
             pickle.dump(self.chunks, f)
     
     def load(self, path: str):
         """Load index and chunks from disk."""
-        self.index = faiss.read_index(f"{path}.faiss")
+        path = os.path.abspath(path)
+        index_dir = os.path.dirname(path)
+        filename = os.path.basename(path)
+        with _faiss_chdir_lock:
+            cwd = os.getcwd()
+            try:
+                os.chdir(index_dir)
+                self.index = faiss.read_index(f"{filename}.faiss")
+            finally:
+                os.chdir(cwd)
         with open(f"{path}.pkl", 'rb') as f:
             self.chunks = pickle.load(f)
     

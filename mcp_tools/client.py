@@ -1,92 +1,200 @@
-"""MCP Tools - Simple implementation for calculator, websearch, and filewriter."""
+"""MCP Tools - Calculator, WebSearch (SerpAPI), FileWriter with OpenAI tool schemas."""
 import json
 import os
-from typing import Dict, Any, Optional
+import math
+import requests
+from typing import Dict, Any, List
 
+
+# ── OpenAI Function Calling Schema 定义 ─────────────────────────────────────
+
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": "计算数学表达式，支持加减乘除、幂运算、三角函数、对数等。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "要计算的数学表达式，例如 '2**10'、'sin(3.14/2)'、'log(100, 10)'"
+                    }
+                },
+                "required": ["expression"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "websearch",
+            "description": "搜索互联网获取最新信息，适合查询时事、补充教材未覆盖的内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词或问题"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "filewriter",
+            "description": "将内容写入学习笔记文件，用于保存学习总结、错题记录等。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "文件名（不含路径），例如 'note.md'"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入的内容"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["write", "append"],
+                        "description": "写入模式：write 覆盖，append 追加"
+                    }
+                },
+                "required": ["filename", "content"]
+            }
+        }
+    }
+]
+
+
+def get_tool_schemas(allowed_tools: List[str]) -> List[Dict]:
+    """根据允许的工具名列表筛选 schema。"""
+    return [s for s in TOOL_SCHEMAS if s["function"]["name"] in allowed_tools]
+
+
+# ── 工具实现 ─────────────────────────────────────────────────────────────────
 
 class MCPTools:
-    """Simple MCP tools implementation."""
-    
+    """MCP tools implementation with real backends."""
+
+    # 由 runner 在每次调用前注入上下文（如 notes_dir）
+    _context: Dict[str, Any] = {}
+
     @staticmethod
     def calculator(expression: str) -> Dict[str, Any]:
-        """Evaluate mathematical expression."""
+        """安全地计算数学表达式。"""
         try:
-            # Safe evaluation of math expressions
-            result = eval(expression, {"__builtins__": {}}, {})
+            safe_globals = {
+                "__builtins__": {},
+                "sin": math.sin, "cos": math.cos, "tan": math.tan,
+                "asin": math.asin, "acos": math.acos, "atan": math.atan,
+                "sqrt": math.sqrt, "log": math.log, "log10": math.log10,
+                "log2": math.log2, "exp": math.exp, "abs": abs,
+                "pi": math.pi, "e": math.e, "pow": math.pow,
+                "floor": math.floor, "ceil": math.ceil, "round": round,
+            }
+            result = eval(expression, safe_globals, {})
             return {
                 "tool": "calculator",
                 "expression": expression,
                 "result": result,
                 "success": True
             }
-        except Exception as e:
+        except Exception as ex:
             return {
                 "tool": "calculator",
                 "expression": expression,
-                "error": str(e),
+                "error": str(ex),
                 "success": False
             }
-    
+
     @staticmethod
     def websearch(query: str) -> Dict[str, Any]:
-        """Simulate web search (placeholder)."""
-        # In a real implementation, this would call a search API
-        return {
-            "tool": "websearch",
-            "query": query,
-            "results": [
-                f"搜索结果1: 关于 '{query}' 的相关信息...",
-                f"搜索结果2: {query} 的定义和应用...",
-            ],
-            "success": True,
-            "note": "这是模拟搜索结果，实际应用中需要接入真实搜索API"
-        }
-    
-    @staticmethod
-    def filewriter(path: str, content: str, mode: str = "write") -> Dict[str, Any]:
-        """Write or append to a file."""
+        """使用 SerpAPI 搜索互联网。"""
+        api_key = os.getenv("SERPAPI_API_KEY", "")
+        if not api_key:
+            return {
+                "tool": "websearch",
+                "query": query,
+                "error": "SERPAPI_API_KEY 未配置",
+                "success": False
+            }
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            
-            if mode == "write":
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-            elif mode == "append":
-                with open(path, 'a', encoding='utf-8') as f:
-                    f.write(content)
-            else:
-                raise ValueError(f"Invalid mode: {mode}")
-            
+            resp = requests.get(
+                "https://serpapi.com/search",
+                params={"q": query, "api_key": api_key, "num": 5, "hl": "zh-cn"},
+                timeout=10
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = []
+            for item in data.get("organic_results", [])[:5]:
+                results.append({
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", ""),
+                    "link": item.get("link", "")
+                })
+
+            return {
+                "tool": "websearch",
+                "query": query,
+                "results": results,
+                "success": True
+            }
+        except Exception as ex:
+            return {
+                "tool": "websearch",
+                "query": query,
+                "error": str(ex),
+                "success": False
+            }
+
+    @staticmethod
+    def filewriter(filename: str, content: str, mode: str = "write",
+                   notes_dir: str = "./data/notes") -> Dict[str, Any]:
+        """将内容写入笔记文件。"""
+        try:
+            os.makedirs(notes_dir, exist_ok=True)
+            # 只取文件名，防止路径穿越
+            safe_name = os.path.basename(filename)
+            path = os.path.join(notes_dir, safe_name)
+            write_mode = "a" if mode == "append" else "w"
+            with open(path, write_mode, encoding="utf-8") as f:
+                f.write(content)
             return {
                 "tool": "filewriter",
                 "path": path,
                 "mode": mode,
                 "success": True
             }
-        except Exception as e:
+        except Exception as ex:
             return {
                 "tool": "filewriter",
-                "path": path,
-                "error": str(e),
+                "filename": filename,
+                "error": str(ex),
                 "success": False
             }
-    
+
     @staticmethod
     def call_tool(tool_name: str, **kwargs) -> Dict[str, Any]:
-        """Call a tool by name."""
+        """按名称调用工具。"""
         if tool_name == "calculator":
             return MCPTools.calculator(kwargs.get("expression", ""))
         elif tool_name == "websearch":
             return MCPTools.websearch(kwargs.get("query", ""))
         elif tool_name == "filewriter":
+            notes_dir = MCPTools._context.get("notes_dir", "./data/notes")
             return MCPTools.filewriter(
-                kwargs.get("path", ""),
-                kwargs.get("content", ""),
-                kwargs.get("mode", "write")
+                filename=kwargs.get("filename", "note.md"),
+                content=kwargs.get("content", ""),
+                mode=kwargs.get("mode", "write"),
+                notes_dir=notes_dir
             )
         else:
-            return {
-                "tool": tool_name,
-                "error": f"Unknown tool: {tool_name}",
-                "success": False
-            }
+            return {"tool": tool_name, "error": f"未知工具: {tool_name}", "success": False}

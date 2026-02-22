@@ -1,9 +1,24 @@
 """Streamlit frontend for Course Learning Agent."""
+import re
 import streamlit as st
 import requests
 import json
 import os
 from datetime import datetime
+
+
+def fix_latex(text: str) -> str:
+    """将 LLM 输出的 LaTeX 定界符转换为 Streamlit KaTeX 可识别的格式。
+    \\[...\\]  →  $$...$$  （块公式）
+    \\(...\\)  →  $...$    （行内公式）
+    """
+    if not text:
+        return text
+    # 块公式：\[ ... \]  →  $$...$$
+    text = re.sub(r'\\\[\s*(.*?)\s*\\\]', r'$$\1$$', text, flags=re.DOTALL)
+    # 行内公式：\( ... \)  →  $...$
+    text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
+    return text
 
 # API endpoint
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
@@ -46,6 +61,12 @@ def create_workspace(course_name: str, subject: str):
             st.success(f"课程 '{course_name}' 创建成功！")
             load_workspaces()
             return True
+        else:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text or f"HTTP {response.status_code}"
+            st.error(f"创建失败: {detail}")
     except Exception as e:
         st.error(f"创建课程失败: {e}")
     return False
@@ -69,33 +90,101 @@ def upload_file(course_name: str, file):
 def build_index(course_name: str):
     """Build RAG index for workspace."""
     try:
-        response = requests.post(f"{API_BASE}/workspaces/{course_name}/build-index")
+        response = requests.post(
+            f"{API_BASE}/workspaces/{course_name}/build-index",
+            timeout=300  # 最长等待5分钟（首次需下载嵌入模型）
+        )
         if response.status_code == 200:
             data = response.json()
             st.success(f"索引构建成功！共 {data['num_chunks']} 个文本块")
             return True
+        else:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text or f"HTTP {response.status_code}"
+            st.error(f"构建失败: {detail}")
+    except requests.exceptions.Timeout:
+        st.error("构建超时，请检查后端是否在下载嵌入模型，稍后重试")
     except Exception as e:
         st.error(f"构建索引失败: {e}")
     return False
 
 
 def send_message(course_name: str, mode: str, message: str):
-    """Send a chat message."""
+    """Send a chat message with history."""
     try:
+        # 取当前消息之前的最多 20 条历史（[-21:-1] 排除最后一条刚 append 的用户消息，避免重复）
+        history = st.session_state.chat_history[-21:-1] if st.session_state.chat_history else []
+        # 只保留 role 和 content 字段
+        history_payload = [{"role": m["role"], "content": m["content"]} for m in history]
         response = requests.post(
             f"{API_BASE}/chat",
             json={
                 "course_name": course_name,
                 "mode": mode,
                 "message": message,
-                "history": []
-            }
+                "history": history_payload
+            },
+            timeout=120
         )
         if response.status_code == 200:
             return response.json()
+        else:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text or f"HTTP {response.status_code}"
+            st.error(f"请求失败: {detail}")
+    except requests.exceptions.Timeout:
+        st.error("请求超时，请稍后重试")
     except Exception as e:
         st.error(f"发送消息失败: {e}")
     return None
+
+
+def stream_chat(course_name: str, mode: str, message: str):
+    """流式发送消息，返回文本 chunk 生成器（供 st.write_stream 使用）。"""
+    import json as _json
+    # 取当前消息之前的最多 20 条历史（[-21:-1] 排除最后一条刚 append 的用户消息，避免重复）
+    history = st.session_state.chat_history[-21:-1] if st.session_state.chat_history else []
+    history_payload = [{"role": m["role"], "content": m["content"]} for m in history]
+    payload = {
+        "course_name": course_name,
+        "mode": mode,
+        "message": message,
+        "history": history_payload,
+    }
+    try:
+        with requests.post(
+            f"{API_BASE}/chat/stream",
+            json=payload,
+            stream=True,
+            timeout=180,
+        ) as resp:
+            if resp.status_code != 200:
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    detail = resp.text or f"HTTP {resp.status_code}"
+                yield f"（请求失败：{detail}）"
+                return
+            for raw_line in resp.iter_lines():
+                if raw_line:
+                    line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        # JSON 解码，还原换行符等特殊字符
+                        try:
+                            yield _json.loads(data)
+                        except _json.JSONDecodeError:
+                            yield data
+    except requests.exceptions.Timeout:
+        yield "（请求超时，请稍后重试）"
+    except Exception as e:
+        yield f"（流式输出失败：{e}）"
 
 
 # Main UI
@@ -111,13 +200,18 @@ with st.sidebar:
         load_workspaces()
     
     # Create new workspace
-    with st.expander("➕ 创建新课程"):
+    if "expander_open" not in st.session_state:
+        st.session_state.expander_open = False
+    with st.expander("➕ 创建新课程", expanded=st.session_state.expander_open):
         new_course_name = st.text_input("课程名称", key="new_course_name")
         new_subject = st.text_input("学科标签", key="new_subject", 
                                     placeholder="例如：线性代数、通信原理")
         if st.button("创建"):
+            st.session_state.expander_open = True
             if new_course_name and new_subject:
                 create_workspace(new_course_name, new_subject)
+            else:
+                st.warning("请填写课程名称和学科标签")
     
     # Select workspace
     st.markdown("### 📖 选择课程")
@@ -155,7 +249,7 @@ with st.sidebar:
         
         uploaded_file = st.file_uploader(
             "上传资料",
-            type=["pdf", "txt", "md"],
+            type=["pdf", "txt", "md", "docx", "pptx", "ppt"],
             key="file_uploader"
         )
         
@@ -197,7 +291,7 @@ if st.session_state.current_course:
     # Display chat history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(fix_latex(msg["content"]))
             
             # Display citations if available
             if msg.get("citations"):
@@ -228,49 +322,24 @@ if st.session_state.current_course:
         with st.chat_message("user"):
             st.markdown(user_input)
         
-        # Send message and get response
-        with st.spinner("思考中..."):
-            response = send_message(
-                st.session_state.current_course,
-                st.session_state.current_mode,
-                user_input
+        # 流式输出助手回答
+        with st.chat_message("assistant"):
+            full_response = st.write_stream(
+                stream_chat(
+                    st.session_state.current_course,
+                    st.session_state.current_mode,
+                    user_input,
+                )
             )
         
-        if response:
-            message = response["message"]
-            
-            # Add assistant message to history
-            history_msg = {
+        if full_response:
+            # 把完整回答加入对话历史（存储时转换定界符，方便后续重渲染）
+            st.session_state.chat_history.append({
                 "role": "assistant",
-                "content": message["content"]
-            }
-            if message.get("citations"):
-                history_msg["citations"] = message["citations"]
-            if message.get("tool_calls"):
-                history_msg["tool_calls"] = message["tool_calls"]
-            
-            st.session_state.chat_history.append(history_msg)
-            
-            # Display assistant message
-            with st.chat_message("assistant"):
-                st.markdown(message["content"])
-                
-                # Display citations
-                if message.get("citations"):
-                    with st.expander("📑 查看引用"):
-                        for i, citation in enumerate(message["citations"]):
-                            st.markdown(f"**引用 {i+1}**: {citation['doc_id']}")
-                            if citation.get("page"):
-                                st.markdown(f"页码: {citation['page']}")
-                            st.text(citation["text"][:200] + "..." if len(citation["text"]) > 200 else citation["text"])
-                
-                # Display tool calls
-                if message.get("tool_calls"):
-                    with st.expander("🔧 工具调用"):
-                        for tool_call in message["tool_calls"]:
-                            st.json(tool_call)
-            
-            st.rerun()
+                "content": fix_latex(full_response),
+            })
+        
+        st.rerun()
 
 else:
     st.info("👈 请先在侧边栏选择或创建一个课程")

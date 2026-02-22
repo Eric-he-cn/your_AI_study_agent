@@ -1,383 +1,296 @@
-# 课程学习助手 (Course Learning Agent)
+# Your AI Study Agent — 学习 / 练习 / 考试 一体化助手
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.31+-red.svg)
+![Python](https://img.shields.io/badge/Python-3.11-blue.svg) ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg) ![Streamlit](https://img.shields.io/badge/Streamlit-1.31-red.svg) ![LLM](https://img.shields.io/badge/LLM-DeepSeek%20Chat%20%7C%20OpenAI-blueviolet.svg) ![FAISS](https://img.shields.io/badge/Vector%20DB-FAISS-orange.svg) ![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)
 
-一个基于 AI 的智能课程学习助手，支持 RAG（检索增强生成）、多 Agent 编排和 MCP 工具调用。帮助大学生更高效地学习课程内容。
+> 将课程教材接入 RAG 知识库，三种模式闭环（学习→练习→考试），多 Agent 协同 + MCP 工具支撑，让大学生更快掌握课程内容。
 
-## ✨ 核心特性
+---
 
-### 🎯 三种学习模式
+## 速览
+- 🎯 三种模式：学习讲解 / 智能出题+评分 / 模拟考试
+- 📚 RAG：PDF/TXT/MD/DOCX/PPTX/PPT 解析，FAISS 检索，附页码引用
+- 🛠️ 工具：计算器、网页搜索（SerpAPI）、文件写入笔记
+- ⚡ 体验：SSE 流式输出，前端实时渲染
+- 🔒 安全：路径穿越防护、并发 chdir 加锁、编码回退、分块死循环保护
 
-1. **📖 学习模式 (Learn)**
-   - 概念讲解与知识点总结
-   - 教材引用与证据溯源
-   - 支持计算器、网页搜索、文件写入
-   - 每个结论都有教材依据
+---
 
-2. **✍️ 练习模式 (Practice)**
-   - 智能出题（支持难度选择）
-   - 自动评分与讲评
-   - 错题本自动记录
-   - 针对性复习建议
+## 模式与工具
 
-3. **📝 考试模式 (Exam)**
-   - 模拟真实考试环境
-   - 禁用网页搜索（防作弊）
-   - 自动组卷与评分
-   - 考后分析报告
+| 模式 | 适用场景 | 允许工具 | 自动记录 |
+|------|----------|----------|----------|
+| **学习 (Learn)** | 概念讲解、知识梳理 | 计算器 + 网页搜索 + 文件写入 | 无 |
+| **练习 (Practice)** | 出题、提交答案、评分讲评 | 计算器 + 文件写入 | `practices/` JSON 练习记录 |
+| **考试 (Exam)** | 模拟考试、自测报告 | 仅计算器 | `exams/` JSON 考试记录 |
 
-### 🔧 技术架构
+- **学习模式**：基于上传教材进行 RAG 检索，每个结论附带文档来源与页码引用；支持网页搜索补充课外知识。
+- **练习模式**：LLM 自动出题评分，完整对话自动保存为 JSONL 练习记录；禁用网页搜索防止作弊。
+- **考试模式**：模拟无辅助考试环境，仅允许计算器，对话结束后保存为考试报告。
 
-- **RAG 知识库**: PDF/TXT/MD 文档解析 + FAISS 向量检索
-- **多 Agent 编排**: Router → Tutor/QuizMaster/Grader
-- **MCP 工具集成**: Calculator、WebSearch、FileWriter
-- **工具策略控制**: 不同模式限制不同工具访问
+### RAG 知识库
 
-## 📋 目录结构
+- 支持 **PDF / TXT / MD / DOCX / PPTX / PPT** 六种格式
+- 文本分块 + FAISS 向量索引（嵌入模型：`all-MiniLM-L6-v2`）
+- TXT/MD 文件自动检测编码（UTF-8 → GBK → Latin-1 回退）
+- 检索结果携带文档名、页码、相关度分数
 
-```
-course-agent/
-├── README.md                    # 项目说明文档
-├── requirements.txt             # Python 依赖
-├── pyproject.toml              # 项目配置
-├── .env.example                # 环境变量示例
-├── frontend/
-│   └── streamlit_app.py        # Streamlit 前端界面
-├── backend/
-│   ├── api.py                  # FastAPI 后端服务
-│   └── schemas.py              # 数据模型定义
-├── core/
-│   ├── llm/
-│   │   └── openai_compat.py    # LLM 客户端
-│   ├── orchestration/
-│   │   ├── runner.py           # 主编排器
-│   │   ├── prompts.py          # 提示词模板
-│   │   └── policies.py         # 工具策略
-│   └── agents/
-│       ├── router.py           # 路由规划 Agent
-│       ├── tutor.py            # 教学 Agent
-│       ├── quizmaster.py       # 出题 Agent
-│       └── grader.py           # 评分 Agent
-├── rag/
-│   ├── ingest.py               # 文档解析
-│   ├── chunk.py                # 文本分块
-│   ├── embed.py                # 向量嵌入
-│   ├── store_faiss.py          # FAISS 向量库
-│   └── retrieve.py             # 检索与引用
-├── mcp_tools/
-│   └── client.py               # MCP 工具客户端
-└── data/
-    └── workspaces/             # 课程工作空间
-        └── <course_name>/
-            ├── uploads/        # 上传的资料
-            ├── index/          # 向量索引
-            ├── notes/          # 学习笔记
-            ├── mistakes/       # 错题本
-            └── exams/          # 考试记录
-```
-
-## 🚀 快速开始
-
-### 1. 环境准备
-
-```bash
-# 克隆仓库
-git clone https://github.com/Eric-he-cn/your_AI_study_agent.git
-cd your_AI_study_agent
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
-### 2. 配置环境变量
-
-```bash
-# 复制环境变量示例文件
-cp .env.example .env
-
-# 编辑 .env 文件，填入你的 API Key
-# OPENAI_API_KEY=your_api_key_here
-# OPENAI_BASE_URL=https://api.openai.com/v1
-# 或使用 DeepSeek: https://api.deepseek.com/v1
-```
-
-### 3. 启动后端服务
-
-```bash
-# 启动 FastAPI 后端
-python backend/api.py
-```
-
-后端服务将在 `http://localhost:8000` 启动
-
-### 4. 启动前端界面
-
-```bash
-# 新开一个终端，启动 Streamlit 前端
-streamlit run frontend/streamlit_app.py
-```
-
-前端界面将在浏览器中自动打开 `http://localhost:8501`
-
-## 📖 使用指南
-
-### 创建课程
-
-1. 在侧边栏点击「创建新课程」
-2. 输入课程名称（如"线性代数"）和学科标签
-3. 点击「创建」按钮
-
-### 上传教材
-
-1. 选择已创建的课程
-2. 在侧边栏上传 PDF、TXT 或 MD 格式的教材文件
-3. 点击「构建索引」按钮，等待索引构建完成
-
-### 开始学习
-
-#### 学习模式
+### 多 Agent 编排
 
 ```
-用户: 什么是矩阵的秩？
-助手: [基于教材内容，给出定义、解释和引用]
+用户请求
+   ↓
+Router Agent  ← 决定：需要 RAG？允许什么工具？输出什么格式？
+   ↓
+┌──────────────┬──────────────┬──────────────┐
+Tutor Agent   QuizMaster     Grader Agent
+（学习讲解）  （出题）       （评分讲评）
+   ↓              ↓               ↓
+  RAG          MCP Tools       结果输出
 ```
 
-#### 练习模式
+### MCP 工具集成
+
+| 工具 | 功能 |
+|------|------|
+| `calculator` | 数学表达式计算（Python `eval` 沙箱） |
+| `websearch` | SerpAPI 网页搜索（学习模式专用） |
+| `filewriter` | 将笔记写入课程 `notes/` 目录 |
+
+### 实时流式输出
+
+后端通过 **Server-Sent Events (SSE)** 逐 token 推送，前端 Streamlit 实时渲染，减少等待感。
+
+---
+
+## 系统架构
 
 ```
-用户: 给我出一道关于矩阵秩的中等难度练习题
-助手: [生成题目]
-用户: [提交答案]
-助手: [评分和讲评，记录错题]
-```
-
-#### 考试模式
-
-```
-用户: 线性代数期中考试
-助手: [生成考试题目，禁用搜索]
-用户: [提交答案]
-助手: [评分和考后报告]
-```
-
-## 🏗️ 系统架构
-
-### 数据流
-
-```
-用户输入 → FastAPI → OrchestrationRunner
-                ↓
-         Router Agent (规划)
-                ↓
-    ┌───────────┼───────────┐
-    ↓           ↓           ↓
-  Tutor    QuizMaster    Grader
-    ↓           ↓           ↓
-   RAG      MCP Tools    结果输出
+Browser (Streamlit :8501)
+    │  HTTP / SSE
+    ▼
+FastAPI (:8000)
+    │
+    ├─ OrchestrationRunner
+    │    ├─ Router Agent   → Plan (是否用 RAG/工具，输出格式)
+    │    ├─ Tutor Agent    → 教学回答 + 引用
++    │    ├─ QuizMaster     → Quiz JSON
+    │    └─ Grader Agent   → GradeReport JSON
+    │
+    ├─ RAG Pipeline
+    │    ├─ DocumentParser  (ingest.py)
+    │    ├─ Chunker         (chunk.py)
+    │    ├─ EmbeddingModel  (embed.py)
+    │    └─ FAISSStore      (store_faiss.py)
+    │
+    └─ MCP Tools
+         ├─ calculator
+         ├─ websearch
+         └─ filewriter
 ```
 
 ### Agent 职责
+| Agent | 输入 | 输出 |
+|-------|------|------|
+| Router | 用户消息 + 模式 | `Plan`（RAG 开关、工具白名单、输出格式） |
+| Tutor | 问题 + RAG 上下文 + 工具结果 | 结构化教学内容 + 引用 |
+| QuizMaster | 主题 + 难度 + RAG 上下文 | `Quiz`（题目 + 答案 + Rubric） |
+| Grader | Quiz + 学生答案 + Rubric | `GradeReport`（分数 + 反馈 + 错误标签） |
 
-| Agent | 职责 | 输入 | 输出 |
-|-------|------|------|------|
-| Router | 任务规划 | 用户请求 + 模式 | Plan（需要 RAG？允许工具？） |
-| Tutor | 概念讲解 | 问题 + 教材上下文 | 结构化教学内容 + 引用 |
-| QuizMaster | 生成题目 | 主题 + 难度 + 教材 | Quiz（题目 + 答案 + Rubric） |
-| Grader | 评分讲评 | 题目 + 学生答案 + Rubric | GradeReport（分数 + 反馈） |
+---
 
-### 工具策略
+## 目录结构
 
-| 模式 | Calculator | WebSearch | FileWriter |
-|------|-----------|-----------|-----------|
-| Learn | ✅ | ✅ | ✅ |
-| Practice | ✅ | ❌ | ✅ |
-| Exam | ✅ | ❌ | ❌ |
-
-## 🔑 核心优势
-
-### 1. 证据优先 (Evidence-First)
-- 每个关键结论都有教材引用
-- 显示来源文档和页码
-- 可追溯、可验证
-
-### 2. 学习闭环
-```
-学习 → 练习 → 考试 → 复习
-  ↑                    ↓
-  └────── 反馈优化 ←────┘
 ```
 
-### 3. 工具可控
-- 不同模式限制不同工具
-- 考试模式防作弊
-- 所有工具调用可观测
-
-### 4. Agent 编排
-- 模块化设计，易扩展
-- 职责分离，便于维护
-- 符合 Agent 应用开发范式
-
-## 🛠️ 技术栈
-
-### 后端
-- **FastAPI**: Web 框架
-- **Python 3.9+**: 编程语言
-- **Pydantic**: 数据验证
-
-### AI & ML
-- **OpenAI API**: LLM 接口（兼容 DeepSeek）
-- **Sentence Transformers**: 文本嵌入
-- **FAISS**: 向量检索
-
-### 文档处理
-- **PyMuPDF**: PDF 解析
-- **自定义分块算法**: 文本切分
-
-### 前端
-- **Streamlit**: 快速原型开发
-
-## 📊 数据模型
-
-### CourseWorkspace
-```python
-{
-    "course_name": "线性代数",
-    "subject": "数学",
-    "documents": ["教材.pdf", "讲义.pdf"],
-    "index_path": "data/workspaces/线性代数/index/faiss_index"
-}
+├── README_v2.md              ← 本文档
+├── USAGE_v2.md               ← 使用手册（面向用户）
+├── requirements.txt
+├── pyproject.toml
+├── .env                      ← 本地环境变量（不入库）
+│
+├── frontend/
+│   └── streamlit_app.py      ← Streamlit 前端
+│
+├── backend/
+│   ├── api.py                ← FastAPI 路由、上传、SSE 端点
+│   └── schemas.py            ← Pydantic 数据模型
+│
+├── core/
+│   ├── llm/
+│   │   └── openai_compat.py  ← LLM 客户端（兼容 DeepSeek / OpenAI）
+│   ├── orchestration/
+│   │   ├── runner.py         ← 主编排器 + 记录保存
+│   │   ├── prompts.py        ← 提示词模板
+│   │   └── policies.py       ← 工具策略（模式 → 允许工具）
+│   └── agents/
+│       ├── router.py
+│       ├── tutor.py
+│       ├── quizmaster.py
+│       └── grader.py
+│
+├── rag/
+│   ├── ingest.py             ← PDF/TXT/MD/DOCX/PPTX/PPT 解析
+│   ├── chunk.py              ← 文本分块（含重叠保护）
+│   ├── embed.py              ← sentence-transformers 嵌入
+│   ├── store_faiss.py        ← FAISS 向量索引（线程安全）
+│   └── retrieve.py           ← 相似度检索 + 引用格式化
+│
+├── mcp_tools/
+│   └── client.py             ← MCP 工具实现
+│
+├── tests/
+│   ├── test_basic.py
+│   └── sample_textbook.txt
+│
+└── data/
+    └── workspaces/
+        └── <course_name>/
+            ├── uploads/      ← 上传的原始文件
+            ├── index/        ← FAISS 索引文件
+            ├── notes/        ← FileWriter 保存的笔记
+            ├── mistakes/     ← 错题本（mistakes.jsonl）
+            ├── practices/    ← 练习记录（自动保存）
+            └── exams/        ← 考试记录（自动保存）
 ```
 
-### Plan
-```python
-{
-    "need_rag": true,
-    "allowed_tools": ["calculator", "filewriter"],
-    "task_type": "practice",
-    "style": "step_by_step",
-    "output_format": "quiz"
-}
+---
+
+## 快速开始
+
+1) 环境准备
+```bash
+conda create -n study_agent python=3.11 -y
+conda activate study_agent
+git clone https://github.com/Eric-he-cn/your_AI_study_agent.git
+cd your_AI_study_agent
+pip install -r requirements.txt
 ```
 
-### Quiz
-```python
-{
-    "question": "计算矩阵的秩...",
-    "standard_answer": "步骤1...",
-    "rubric": "得分点：...",
-    "difficulty": "medium",
-    "chapter": "第2章"
-}
+2) 配置环境变量（项目根目录 `.env`）
+```dotenv
+# LLM（必填）
+OPENAI_API_KEY=sk-xxxxxxxx
+OPENAI_BASE_URL=https://api.deepseek.com      # 或 https://api.openai.com/v1
+DEFAULT_MODEL=deepseek-chat                   # 或 gpt-4o 等
+
+# RAG（可选，均有默认值）
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+CHUNK_SIZE=512
+CHUNK_OVERLAP=50
+TOP_K_RESULTS=3
+
+# MCP（可选）
+SERPAPI_API_KEY=your_serpapi_key
 ```
 
-### GradeReport
-```python
-{
-    "score": 85.0,
-    "feedback": "答对了主要步骤...",
-    "mistake_tags": ["计算错误"],
-    "references": [...]
-}
+3) 启动服务
+```bash
+# 终端1：后端
+python -m backend.api   # 端口 8000，Swagger: http://localhost:8000/docs
+
+# 终端2：前端
+streamlit run frontend/streamlit_app.py   # 端口 8501
 ```
 
-## 🔧 配置说明
+4) 首次使用流程
+```
+① 侧边栏创建课程（课程名 + 学科标签）
+② 选择课程 → 上传教材（PDF/TXT/MD/DOCX/PPTX/PPT）
+③ 点击「构建索引」→ 等待完成（显示块数）
+④ 选择模式（学习/练习/考试）开始对话
+```
 
-### 环境变量
+---
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| OPENAI_API_KEY | OpenAI API 密钥 | - |
-| OPENAI_BASE_URL | API 基础 URL | https://api.openai.com/v1 |
-| DEFAULT_MODEL | 默认模型 | gpt-3.5-turbo |
-| EMBEDDING_MODEL | 嵌入模型 | all-MiniLM-L6-v2 |
-| CHUNK_SIZE | 分块大小 | 512 |
-| CHUNK_OVERLAP | 分块重叠 | 50 |
-| TOP_K_RESULTS | 检索数量 | 3 |
+## 环境变量说明
+| 变量 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `OPENAI_API_KEY` | ✅ | — | LLM API 密钥 |
+| `OPENAI_BASE_URL` | ✅ | `https://api.openai.com/v1` | API 基础 URL |
+| `DEFAULT_MODEL` | — | `gpt-3.5-turbo` | 对话模型名称 |
+| `EMBEDDING_MODEL` | — | `all-MiniLM-L6-v2` | 嵌入模型（HuggingFace Hub ID） |
+| `CHUNK_SIZE` | — | `512` | 文本分块大小（字符数） |
+| `CHUNK_OVERLAP` | — | `50` | 分块重叠大小（需 < CHUNK_SIZE） |
+| `TOP_K_RESULTS` | — | `3` | 每次检索返回的最大块数 |
+| `SERPAPI_API_KEY` | — | — | SerpAPI 密钥（学习模式网页搜索） |
+| `DATA_DIR` | — | `data/workspaces` | 课程数据根目录 |
 
-## 📝 API 文档
+---
 
-### 创建课程
+## API 速查
+
+完整接口见 `http://localhost:8000/docs`。
+
+### 课程管理
 ```http
-POST /workspaces
-Content-Type: application/json
-
-{
-    "course_name": "线性代数",
-    "subject": "数学"
-}
+GET    /workspaces                          # 列表
+POST   /workspaces                          # 创建  Body: {course_name, subject}
+DELETE /workspaces/{course_name}            # 删除
 ```
 
-### 上传文档
+### 资料管理
 ```http
-POST /workspaces/{course_name}/upload
-Content-Type: multipart/form-data
-
-file: <file>
-```
-
-### 构建索引
-```http
-POST /workspaces/{course_name}/build-index
+POST   /workspaces/{course_name}/upload      # multipart/form-data 上传
+POST   /workspaces/{course_name}/build-index # 构建 FAISS 索引
 ```
 
 ### 对话
 ```http
-POST /chat
-Content-Type: application/json
-
+POST   /chat                                 # 同步对话
+POST   /chat/stream                          # SSE 流式对话
+```
+请求体示例：
+```json
 {
-    "course_name": "线性代数",
-    "mode": "learn",
-    "message": "什么是矩阵的秩？",
-    "history": []
+  "course_name": "线性代数",
+  "mode": "learn",
+  "message": "什么是矩阵的秩？",
+  "history": [
+    {"role": "user", "content": "上一条消息"},
+    {"role": "assistant", "content": "上一条回复"}
+  ]
 }
 ```
-
-## 🎯 产品价值
-
-### 对比通用 AI 助手
-
-| 特性 | ChatGPT | 本系统 |
-|------|---------|--------|
-| 课程针对性 | ❌ | ✅ 基于教材 |
-| 引用溯源 | ❌ | ✅ 页码 + 文档 |
-| 练习闭环 | ❌ | ✅ 出题 + 评分 |
-| 错题管理 | ❌ | ✅ 自动记录 |
-| 考试模拟 | ❌ | ✅ 可控环境 |
-| 工具策略 | ❌ | ✅ 模式限制 |
-
-### 解决的痛点
-
-1. ✅ **资料分散** → 统一知识库管理
-2. ✅ **回答不精准** → 基于教材的 RAG
-3. ✅ **缺乏练习** → 智能出题与评分
-4. ✅ **不可追溯** → 证据引用系统
-5. ✅ **工具支持** → MCP 工具集成
-
-## 🔮 未来规划
-
-- [ ] 支持更多文档格式（Word、Excel、PPT）
-- [ ] 多轮对话上下文管理
-- [ ] 个性化学习路径推荐
-- [ ] 团队协作与分享功能
-- [ ] 移动端适配
-- [ ] 离线模型支持
-- [ ] 更丰富的可视化报表
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-MIT License
-
-## 👨‍💻 作者
-
-Eric He
+SSE 每帧格式：`data: <JSON字符串>\n\n`，需 `json.loads()` 解码。
 
 ---
 
-**注意**: 使用前请确保配置了有效的 OpenAI API Key 或兼容的 LLM API。
+## 技术栈
+| 层次 | 技术 |
+|------|------|
+| 前端 | Streamlit 1.31 |
+| 后端 | FastAPI 0.109 + Uvicorn |
+| LLM | OpenAI SDK 兼容（DeepSeek / OpenAI / 本地 Ollama） |
+| 嵌入 | sentence-transformers `all-MiniLM-L6-v2` |
+| 向量库 | FAISS CPU |
+| 文档解析 | PyMuPDF（PDF）、python-docx（DOCX）、python-pptx（PPTX）、pywin32+PowerPoint（PPT） |
+| 数据校验 | Pydantic v2 |
+| 工具搜索 | SerpAPI |
+| 异步 | Python asyncio + SSE |
+
+---
+
+## 安全与可靠性
+- **文件上传**：`basename` 净化 + 扩展名白名单（`.pdf .txt .md .docx .pptx .ppt`），阻断路径穿越与非法格式。
+- **课程名称**：`get_workspace_path()` 强制 `basename`，拒绝 `../` 等非法输入。
+- **FAISS 并发安全**：全局锁包裹 `os.chdir()` + FAISS 读写，避免并发修改工作目录。
+- **分块安全**：`chunk.py` 自动收敛 `overlap >= chunk_size`，杜绝死循环。
+- **编码回退**：TXT 解析按 `utf-8-sig → utf-8 → gbk → latin-1` 尝试，不再静默丢失内容。
+- **流式稳健性**：SSE chunk 统一 JSON 编码，前端逐帧 `json.loads()`，防止换行截断。
+
+---
+
+## 已知限制
+- 扫描版 PDF（图片）需先 OCR，当前不支持直接提取文字。
+- `.ppt` 解析依赖本机安装 Microsoft PowerPoint（通过 COM 转换到 `.pptx`）。
+- `all-MiniLM-L6-v2` 中文效果一般，可换为 `paraphrase-multilingual-MiniLM-L12-v2` 等多语模型。
+- FAISS CPU 在 >100 万向量时性能下降，需考虑 GPU 或分片方案。
+- 设计为单机部署，多实例需额外处理索引共享与并发写。
+
+---
+
+## 贡献与许可
+- 欢迎提交 Issue / PR，一起完善功能与安全性。
+- 许可证：MIT License
+- 作者：**Eric He** · 更新日期：2026-02-22
+

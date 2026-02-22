@@ -9,6 +9,12 @@ def simple_chunk_text(
     overlap: int = 50
 ) -> List[str]:
     """Simple chunking by character count with overlap."""
+    # 防止 overlap >= chunk_size 导致 start 永不前进而死循环
+    if chunk_size <= 0:
+        chunk_size = 512
+    if overlap >= chunk_size:
+        overlap = chunk_size // 2
+
     chunks = []
     start = 0
     text_len = len(text)
@@ -18,7 +24,10 @@ def simple_chunk_text(
         chunk = text[start:end]
         if chunk.strip():
             chunks.append(chunk)
-        start = end - overlap
+        next_start = end - overlap
+        if next_start <= start:          # 额外安全兜底
+            next_start = start + chunk_size
+        start = next_start
         
     return chunks
 

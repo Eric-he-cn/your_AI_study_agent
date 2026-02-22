@@ -1,7 +1,8 @@
 """Tutor Agent for learning mode."""
-from typing import List
+from typing import List, Optional
 from core.llm.openai_compat import get_llm_client
 from core.orchestration.prompts import TUTOR_PROMPT
+from mcp_tools.client import get_tool_schemas
 from backend.schemas import RetrievedChunk
 
 
@@ -15,19 +16,91 @@ class TutorAgent:
         self,
         question: str,
         course_name: str,
-        context: str
+        context: str,
+        allowed_tools: Optional[List[str]] = None,
+        history: Optional[List[dict]] = None
     ) -> str:
-        """Generate teaching response with citations."""
+        """Generate teaching response, optionally with tool calling and conversation history."""
         prompt = TUTOR_PROMPT.format(
             course_name=course_name,
             context=context,
             question=question
         )
-        
-        messages = [
-            {"role": "system", "content": "你是一位专业的大学课程导师。"},
-            {"role": "user", "content": prompt}
-        ]
-        
-        response = self.llm.chat(messages, temperature=0.7, max_tokens=1500)
-        return response
+
+        if allowed_tools:
+            schemas = get_tool_schemas(allowed_tools)
+            tool_desc = "、".join(allowed_tools)
+            system_prompt = (
+                f"你是一位专业的大学课程导师。"
+                f"你可以使用以下工具：{tool_desc}。"
+                f"规则：\n"
+                f"1. 遇到数学计算，必须调用 calculator 工具，不要自己心算。\n"
+                f"2. 优先从数据库中获取数据，遇到超出知识库的信息或者需要网络查询的信息（新闻/网络资料/日期/天气等），可以调用 websearch 工具，但仍然以数据库为准。\n"
+                f"3. 用户明确要求保存笔记，必须调用 filewriter 工具，文件名用中文，格式为 .md。\n"
+                f"4. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
+            )
+        else:
+            system_prompt = "你是一位专业的大学课程导师。"
+
+        # 构建 messages：system + 历史轮次 + 当前问题
+        messages: List[dict] = [{"role": "system", "content": system_prompt}]
+
+        # 插入历史对话（最多保留最近 20 条，避免 token 超限）
+        if history:
+            for msg in history[-20:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": prompt})
+
+        if allowed_tools:
+            return self.llm.chat_with_tools(messages, tools=schemas,
+                                            temperature=0.7, max_tokens=2000)
+        return self.llm.chat(messages, temperature=0.7, max_tokens=1500)
+
+    def teach_stream(
+        self,
+        question: str,
+        course_name: str,
+        context: str,
+        allowed_tools: Optional[List[str]] = None,
+        history: Optional[List[dict]] = None
+    ):
+        """流式版本的 teach()，返回文本 chunk 生成器。"""
+        prompt = TUTOR_PROMPT.format(
+            course_name=course_name,
+            context=context,
+            question=question
+        )
+
+        if allowed_tools:
+            schemas = get_tool_schemas(allowed_tools)
+            tool_desc = "、".join(allowed_tools)
+            system_prompt = (
+                f"你是一位专业的大学课程导师。"
+                f"你可以使用以下工具：{tool_desc}。"
+                f"规则：\n"
+                f"1. 遇到数学计算，必须调用 calculator 工具，不要自己心算。\n"
+                f"2. 优先从数据库中获取数据，遇到超出知识库的信息或者需要网络查询的信息（新闻/网络资料/日期/天气等），可以调用 websearch 工具，但仍然以数据库为准。\n"
+                f"3. 用户明确要求保存笔记，必须调用 filewriter 工具，文件名用中文，格式为 .md。\n"
+                f"4. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
+            )
+        else:
+            system_prompt = "你是一位专业的大学课程导师。"
+
+        messages: List[dict] = [{"role": "system", "content": system_prompt}]
+        if history:
+            for msg in history[-20:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": prompt})
+
+        if allowed_tools:
+            yield from self.llm.chat_stream_with_tools(messages, tools=schemas,
+                                                       temperature=0.7, max_tokens=2000)
+        else:
+            yield from self.llm.chat_stream(messages, temperature=0.7, max_tokens=1500)
