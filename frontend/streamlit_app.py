@@ -20,6 +20,77 @@ def fix_latex(text: str) -> str:
     text = re.sub(r'\\\(\s*(.*?)\s*\\\)', r'$\1$', text, flags=re.DOTALL)
     return text
 
+
+def extract_mermaid_blocks(text: str):
+    """从回复文本中提取 ```mermaid``` 代码块，返回 (cleaned_text, [code_str, ...])。"""
+    blocks: list[str] = []
+
+    def _repl(m: re.Match) -> str:
+        blocks.append(m.group(1).strip())
+        return "\n> 📊 *[思维导图已在下方渲染]*\n"
+
+    cleaned = re.sub(r"```mermaid\s*(.*?)```", _repl, text, flags=re.DOTALL)
+    return cleaned, blocks
+
+
+def render_mermaid(mermaid_code: str, idx: int = 0, height: int = 520) -> None:
+    """使用 Mermaid CDN + components.html 渲染思维导图，并提供 SVG/PNG 下载按钮。"""
+    import streamlit.components.v1 as components
+
+    svg_id = f"mm{idx}"
+    html_code = f"""<!DOCTYPE html>
+<html><head>
+<style>
+  body{{margin:0;padding:8px;background:#fff;font-family:sans-serif;}}
+  .tb{{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;}}
+  button{{padding:5px 14px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;
+          background:#f8f9fa;font-size:13px;}}
+  button:hover{{background:#e2e6ea;}}
+  #mc{{overflow:auto;text-align:center;}}
+  .mermaid{{display:inline-block;}}
+</style>
+</head><body>
+<div class="tb">
+  <button onclick="dlSVG()">⬇ 下载 SVG</button>
+  <button onclick="dlPNG()">🖼 下载 PNG</button>
+</div>
+<div id="mc"><div class="mermaid" id="{svg_id}">{mermaid_code}</div></div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({{startOnLoad:true,theme:'default',securityLevel:'loose'}});
+</script>
+<script>
+function dlSVG(){{
+  var el=document.querySelector('#{svg_id} svg');
+  if(!el){{alert('图表尚未渲染，请稍等片刻');return;}}
+  var d=new XMLSerializer().serializeToString(el);
+  var b=new Blob([d],{{type:'image/svg+xml;charset=utf-8'}});
+  var u=URL.createObjectURL(b);
+  var a=document.createElement('a');a.href=u;a.download='mindmap.svg';a.click();
+  URL.revokeObjectURL(u);
+}}
+function dlPNG(){{
+  var el=document.querySelector('#{svg_id} svg');
+  if(!el){{alert('图表尚未渲染，请稍等片刻');return;}}
+  var sd=new XMLSerializer().serializeToString(el);
+  var c=document.createElement('canvas');
+  var bb=el.getBoundingClientRect();
+  c.width=bb.width||800;c.height=bb.height||600;
+  var ctx=c.getContext('2d');
+  var img=new Image();
+  img.onload=function(){{
+    ctx.fillStyle='white';ctx.fillRect(0,0,c.width,c.height);
+    ctx.drawImage(img,0,0);
+    var a=document.createElement('a');a.href=c.toDataURL('image/png');
+    a.download='mindmap.png';a.click();
+  }};
+  img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(sd)));
+}}
+</script>
+</body></html>"""
+    components.html(html_code, height=height, scrolling=True)
+
+
 # API endpoint
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
@@ -314,7 +385,20 @@ if st.session_state.current_course:
                 with st.expander("🔧 工具调用"):
                     for tool_call in msg["tool_calls"]:
                         st.json(tool_call)
-    
+
+            # Render mermaid blocks if available
+            for m_idx, mb in enumerate(msg.get("mermaid_blocks") or []):
+                render_mermaid(mb["code"], idx=abs(hash(mb["code"])) % 100000, height=520)
+                with st.expander("📄 下载 Mermaid 源码"):
+                    safe_title = re.sub(r"[^\w\-]", "_", mb.get("title", "mindmap"))
+                    st.download_button(
+                        label="⬇ 下载 .md 文件",
+                        data=f"```mermaid\n{mb['code']}\n```",
+                        file_name=f"{safe_title}.md",
+                        mime="text/markdown",
+                        key=f"dl_md_{abs(hash(mb['code'])) % 100000}_{m_idx}",
+                    )
+
     # Chat input
     user_input = st.chat_input("输入你的问题...")
     
@@ -352,15 +436,19 @@ if st.session_state.current_course:
             st.write_stream(_collecting_stream())
 
         full_response = "".join(collected_chunks)
-        
+
         if full_response:
             # 捕获流式过程中拦截到的 citations
             citations = st.session_state.pop("_pending_citations", None) or None
+            # 提取 mermaid 代码块，避免 markdown 渲染失败
+            cleaned_response, mermaid_codes = extract_mermaid_blocks(full_response)
+            mermaid_blocks = [{"code": c, "title": "思维导图"} for c in mermaid_codes]
             # 把完整回答加入对话历史（存储时转换定界符，方便后续重渲染）
             st.session_state.chat_history.append({
                 "role": "assistant",
-                "content": fix_latex(full_response),
+                "content": fix_latex(cleaned_response),
                 "citations": citations,
+                "mermaid_blocks": mermaid_blocks,
             })
         
         st.rerun()

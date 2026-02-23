@@ -35,12 +35,23 @@ class TutorAgent:
                 f"你可以使用以下工具：{tool_desc}。"
                 f"规则：\n"
                 f"1. 遇到数学计算，必须调用 calculator 工具，不要自己心算。\n"
-                f"2. 优先从数据库中获取数据，遇到超出知识库的信息或者需要网络查询的信息（新闻/网络资料/日期/天气等），可以调用 websearch 工具，但仍然以数据库为准。\n"
+                f"2. 优先从数据库中获取数据，遇到超出知识库的信息或者需要网络查询的信息，可以调用 websearch 工具。\n"
                 f"3. 用户明确要求保存笔记，必须调用 filewriter 工具，文件名用中文，格式为 .md。\n"
-                f"4. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
+                f"4. 用户要求生成思维导图或知识点汇总，必须调用 mindmap_generator 工具。\n"
+                f"5. 如果该知识点用户之前问过或做错过，可以调用 memory_search 工具检索历史记录。\n"
+                f"6. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
             )
         else:
             system_prompt = "你是一位专业的大学课程导师。"
+
+        # 注入用户画像（薄弱知识点等），失败不影响主流程
+        try:
+            from memory.manager import get_memory_manager
+            profile_ctx = get_memory_manager().get_profile_context(course_name)
+            if profile_ctx:
+                system_prompt += f"\n\n【用户学习档案】{profile_ctx}"
+        except Exception:
+            pass
 
         # 构建 messages：system + 历史轮次 + 当前问题
         messages: List[dict] = [{"role": "system", "content": system_prompt}]
@@ -85,8 +96,9 @@ class TutorAgent:
                 f"1. 遇到数学计算，必须调用 calculator 工具，不要自己心算。\n"
                 f"2. 优先从数据库中获取数据，遇到超出知识库的信息或者需要网络查询的信息（新闻/网络资料/日期/天气等），可以调用 websearch 工具，但仍然以数据库为准。\n"
                 f"3. 用户明确要求保存笔记，必须调用 filewriter 工具，文件名用中文，格式为 .md。\n"
-                f"4. 如果该知识点用户之前问过或做错过，可以调用 memory_search 工具检索历史记录，避免重复讲解相同内容。\n"
-                f"5. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
+                f"4. 用户要求生成思维导图或知识点汇总，必须调用 mindmap_generator 工具。\n"
+                f"5. 如果该知识点用户之前问过或做错过，可以调用 memory_search 工具检索历史记录。\n"
+                f"6. 禁止编造工具调用结果，必须等待工具真实返回后再回答。"
             )
         else:
             system_prompt = "你是一位专业的大学课程导师。"
