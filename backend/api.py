@@ -176,6 +176,72 @@ async def upload_document(
     }
 
 
+@app.get("/workspaces/{course_name}/files")
+async def list_workspace_files(course_name: str):
+    """列出课程的已上传文件及索引状态。"""
+    if course_name not in workspaces:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace_path = runner.get_workspace_path(course_name)
+    uploads_dir = os.path.join(workspace_path, "uploads")
+    index_path = os.path.abspath(workspaces[course_name].index_path)
+
+    files = []
+    if os.path.exists(uploads_dir):
+        for fname in sorted(os.listdir(uploads_dir)):
+            fpath = os.path.join(uploads_dir, fname)
+            if os.path.isfile(fpath):
+                stat = os.stat(fpath)
+                files.append({
+                    "name": fname,
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                })
+
+    # 索引状态：目录存在且非空即视为已建立
+    index_built = os.path.isdir(index_path) and bool(os.listdir(index_path))
+    index_mtime = None
+    if index_built:
+        try:
+            mtimes = [os.stat(os.path.join(index_path, f)).st_mtime
+                      for f in os.listdir(index_path)]
+            if mtimes:
+                index_mtime = datetime.fromtimestamp(max(mtimes)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+    return {"files": files, "index_built": index_built, "index_mtime": index_mtime}
+
+
+@app.delete("/workspaces/{course_name}/files/{filename}")
+async def delete_workspace_file(course_name: str, filename: str):
+    """删除课程中某个已上传的原始文件。"""
+    if course_name not in workspaces:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    safe_filename = os.path.basename(filename)
+    workspace_path = runner.get_workspace_path(course_name)
+    fpath = os.path.join(workspace_path, "uploads", safe_filename)
+    if not os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail=f"文件 {safe_filename} 不存在")
+    os.remove(fpath)
+    # 同步内存
+    ws = workspaces[course_name]
+    if safe_filename in ws.documents:
+        ws.documents.remove(safe_filename)
+    return {"message": f"文件 {safe_filename} 已删除"}
+
+
+@app.delete("/workspaces/{course_name}/index")
+async def delete_workspace_index(course_name: str):
+    """删除课程的 FAISS 索引（不影响已上传的原始文件）。"""
+    if course_name not in workspaces:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    index_path = os.path.abspath(workspaces[course_name].index_path)
+    if not os.path.isdir(index_path):
+        raise HTTPException(status_code=404, detail="索引不存在")
+    shutil.rmtree(index_path)
+    return {"message": "索引已删除"}
+
+
 @app.post("/workspaces/{course_name}/build-index")
 async def build_workspace_index(course_name: str):
     """Build RAG index for workspace."""

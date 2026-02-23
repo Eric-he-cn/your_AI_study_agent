@@ -110,6 +110,84 @@ function dlPNG(){{
 # API endpoint
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
+# ── 模式主题色 ───────────────────────────────────────────────────────────────
+MODE_THEME = {
+    "learn":    {"bg": "#EBF5FB", "accent": "#2471A3", "pill": "#D6EAF8", "label": "📖 学习模式"},
+    "practice": {"bg": "#EAFAF1", "accent": "#1E8449", "pill": "#D5F5E3", "label": "✍️ 练习模式"},
+    "exam":     {"bg": "#FEF9E7", "accent": "#9A7D0A", "pill": "#FCF3CF", "label": "📝 考试模式"},
+}
+
+def inject_mode_css(mode: str) -> None:
+    """根据学习模式注入主题背景色。"""
+    c = MODE_THEME.get(mode, MODE_THEME["learn"])
+    st.markdown(f"""<style>
+[data-testid="stAppViewContainer"] > .main {{
+    background-color: {c["bg"]};
+    transition: background-color 0.4s ease;
+}}
+[data-testid="stSidebar"] {{
+    background-color: #F2F3F4 !important;
+}}
+.mode-pill {{
+    display:inline-block; padding:5px 16px; border-radius:20px;
+    background:{c["pill"]}; color:{c["accent"]}; font-weight:700;
+    font-size:0.92rem; border:1px solid {c["accent"]}55; letter-spacing:.3px;
+}}
+.help-section {{
+    background:#fff; border:1px solid #DEE2E6; border-radius:12px;
+    padding:22px 24px; line-height:1.75; margin-bottom:12px;
+}}
+.help-section h3 {{ color:{c["accent"]}; margin-top:1rem; }}
+.file-row {{ display:flex; align-items:center; gap:8px; padding:4px 0; }}
+</style>""", unsafe_allow_html=True)
+
+# ── 帮助面板内容 ──────────────────────────────────────────────────────────────
+HELP_CONTENT = """
+<div class="help-section">
+<h3>🚀 快速开始</h3>
+<ol>
+  <li><b>创建课程</b>：侧边栏 → 「➕ 创建新课程」，填写课程名与学科标签</li>
+  <li><b>上传资料</b>：选择课程后，上传 PDF / TXT / MD / DOCX / PPTX 等教材文件</li>
+  <li><b>构建索引</b>：点击「🔨 构建索引」，系统将对教材进行向量化，首次需下载嵌入模型（约1GB，仅下载一次）</li>
+  <li><b>开始对话</b>：选择学习模式后，在底部输入框提问即可</li>
+</ol>
+
+<h3>📖 学习模式</h3>
+<ul>
+  <li>向 AI 提问任何教材相关内容，获得基于教材的精准讲解</li>
+  <li>每条回答附带<b>引用来源</b>，点击可查看原始段落</li>
+  <li>可要求"生成 XX 的思维导图"，AI 将自动绘制 Mermaid 思维导图并支持下载</li>
+  <li>可直接搜索互联网补充教材未覆盖的内容</li>
+  <li>AI 会记录你的学习历史，自动关注薄弱知识点</li>
+</ul>
+
+<h3>✍️ 练习模式</h3>
+<ul>
+  <li>告诉 AI 你想练习的知识点与题型（选择题 / 判断题 / 简答题 / 计算题等）</li>
+  <li>AI 出题后，直接在对话框回答，系统将自动评分并给出详细解析</li>
+  <li>评分采用<b>逐题对照</b>机制，确保结果准确</li>
+  <li>错题将自动记录到记忆库，下次练习时 AI 会优先强化薄弱点</li>
+</ul>
+
+<h3>📝 考试模式</h3>
+<ul>
+  <li>首先告诉 AI 考试配置（范围、题型、题数、难度）</li>
+  <li>AI 生成完整试卷后，将所有答案<b>一次性提交</b></li>
+  <li>AI 出具逐题批改报告和总得分，并分析薄弱知识点</li>
+  <li>考试模式禁用联网搜索，模拟真实考场</li>
+</ul>
+
+<h3>🛠️ 实用技巧</h3>
+<ul>
+  <li><b>思维导图</b>：输入"帮我生成【主题】的思维导图"，可下载 SVG / PNG / Mermaid 源码</li>
+  <li><b>笔记保存</b>：输入"把这段内容保存为笔记"，AI 会自动写入课程目录</li>
+  <li><b>切换课程</b>：切换后对话历史自动清空，互不干扰</li>
+  <li><b>文件管理</b>：侧边栏「📁 文件与索引」区可查看已上传文件、索引状态，并支持单独删除</li>
+</ul>
+</div>
+"""
+
+
 st.set_page_config(
     page_title="课程学习助手",
     page_icon="📚",
@@ -125,6 +203,8 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "workspaces" not in st.session_state:
     st.session_state.workspaces = []
+if "show_help" not in st.session_state:
+    st.session_state.show_help = False
 
 
 def load_workspaces():
@@ -332,46 +412,126 @@ with st.sidebar:
     
     # Knowledge base management
     if st.session_state.current_course:
-        st.markdown("### 📚 知识库管理")
-        
-        uploaded_file = st.file_uploader(
-            "上传资料",
-            type=["pdf", "txt", "md", "docx", "pptx", "ppt"],
-            key="file_uploader"
-        )
-        
-        if uploaded_file and st.button("上传"):
-            if upload_file(st.session_state.current_course, uploaded_file):
-                st.success(f"文件 {uploaded_file.name} 上传成功！")
-        
-        if st.button("🔨 构建索引"):
-            with st.spinner("正在构建索引..."):
-                build_index(st.session_state.current_course)
+        st.markdown("### � 文件与索引")
+
+        # ── 上传区 ──────────────────────────────────
+        with st.expander("📤 上传资料", expanded=False):
+            uploaded_file = st.file_uploader(
+                "选择文件",
+                type=["pdf", "txt", "md", "docx", "pptx", "ppt"],
+                key="file_uploader",
+                label_visibility="collapsed",
+            )
+            if uploaded_file and st.button("⬆ 上传"):
+                if upload_file(st.session_state.current_course, uploaded_file):
+                    st.success(f"✅ {uploaded_file.name} 上传成功")
+                    st.rerun()
+
+        # ── 文件列表 ─────────────────────────────────
+        course = st.session_state.current_course
+        try:
+            resp = requests.get(f"{API_BASE}/workspaces/{course}/files", timeout=5)
+            fdata = resp.json() if resp.status_code == 200 else {"files": [], "index_built": False, "index_mtime": None}
+        except Exception:
+            fdata = {"files": [], "index_built": False, "index_mtime": None}
+
+        files = fdata.get("files", [])
+        index_built = fdata.get("index_built", False)
+        index_mtime = fdata.get("index_mtime")
+
+        if files:
+            with st.expander(f"📂 已上传文件 ({len(files)})", expanded=True):
+                for f in files:
+                    size_kb = f["size"] / 1024
+                    size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB"
+                    col_f, col_del = st.columns([5, 1])
+                    with col_f:
+                        st.caption(f"📄 **{f['name']}**  \n{size_str} · {f['modified']}")
+                    with col_del:
+                        safe_key = re.sub(r"\W", "_", f["name"])
+                        if st.button("🗑", key=f"del_file_{safe_key}", help=f"删除 {f['name']}"):
+                            try:
+                                dr = requests.delete(
+                                    f"{API_BASE}/workspaces/{course}/files/{f['name']}", timeout=10)
+                                if dr.status_code == 200:
+                                    st.success(f"已删除 {f['name']}")
+                                    st.rerun()
+                                else:
+                                    st.error(dr.json().get("detail", "删除失败"))
+                            except Exception as ex:
+                                st.error(str(ex))
+        else:
+            st.caption("暂无已上传文件")
+
+        # ── 索引状态 ─────────────────────────────────
+        st.markdown("**🗂 索引状态**")
+        if index_built:
+            st.success(f"索引已建立（{index_mtime or '时间未知'}）")
+            col_b, col_d = st.columns(2)
+            with col_b:
+                if st.button("🔨 重建索引", use_container_width=True):
+                    with st.spinner("构建中…"):
+                        build_index(course)
+                    st.rerun()
+            with col_d:
+                if st.button("🗑 删除索引", use_container_width=True):
+                    try:
+                        dr = requests.delete(f"{API_BASE}/workspaces/{course}/index", timeout=10)
+                        if dr.status_code == 200:
+                            st.warning("索引已删除")
+                            st.rerun()
+                        else:
+                            st.error(dr.json().get("detail", "删除失败"))
+                    except Exception as ex:
+                        st.error(str(ex))
+        else:
+            st.warning("索引尚未建立")
+            if st.button("🔨 构建索引", use_container_width=True):
+                with st.spinner("正在构建索引，首次需下载嵌入模型，请耐心等待…"):
+                    build_index(course)
+                st.rerun()
+
 
 # Main content
 if st.session_state.current_course:
-    # Display current settings
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.info(f"**当前课程**: {st.session_state.current_course}")
-    with col2:
-        mode_names = {
-            "learn": "📖 学习模式",
-            "practice": "✍️ 练习模式",
-            "exam": "📝 考试模式"
+    # 注入模式主题色
+    inject_mode_css(st.session_state.current_mode)
+
+    # ── 顶栏：课程/模式信息 + 帮助 + 清空历史 ────────────────────────────────
+    col_info, col_btns = st.columns([6, 2])
+    with col_info:
+        c = MODE_THEME[st.session_state.current_mode]
+        st.markdown(
+            f"**当前课程**：{st.session_state.current_course} &nbsp;&nbsp;"
+            f'<span class="mode-pill">{c["label"]}</span>',
+            unsafe_allow_html=True,
+        )
+        mode_tips = {
+            "learn":    "💡 提问知识点、要求生成思维导图、保存笔记",
+            "practice": "✍️ 指定题型和知识点，提交答案后自动评分",
+            "exam":     "📝 配置考试 → 收到试卷 → 一次性提交全部答案",
         }
-        st.info(f"**当前模式**: {mode_names[st.session_state.current_mode]}")
-    
-    # Mode descriptions
-    mode_descriptions = {
-        "learn": "💡 **学习模式**: 概念讲解、答疑解惑，所有回答都会引用教材来源",
-        "practice": "✍️ **练习模式**: 生成练习题、评分讲评、记录错题",
-        "exam": "📝 **考试模式**: 模拟考试环境，禁用网页搜索，独立完成"
-    }
-    st.markdown(mode_descriptions[st.session_state.current_mode])
-    
+        st.caption(mode_tips[st.session_state.current_mode])
+    with col_btns:
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("❓ 帮助", use_container_width=True):
+                st.session_state.show_help = not st.session_state.show_help
+        with btn_col2:
+            if st.button("🗑 清空", use_container_width=True, help="清空当前对话历史"):
+                st.session_state.chat_history = []
+                st.rerun()
+
+    # ── 帮助面板（可折叠） ───────────────────────────────────────────────────
+    if st.session_state.show_help:
+        inject_mode_css(st.session_state.current_mode)  # 确保 CSS 在组件前渲染
+        st.markdown(HELP_CONTENT, unsafe_allow_html=True)
+        if st.button("✖ 关闭帮助"):
+            st.session_state.show_help = False
+            st.rerun()
+
     st.markdown("---")
-    
+
     # Chat interface
     st.subheader("💬 对话区")
     
@@ -470,36 +630,6 @@ if st.session_state.current_course:
         st.rerun()
 
 else:
+    inject_mode_css("learn")
     st.info("👈 请先在侧边栏选择或创建一个课程")
-    
-    # Show features
-    st.markdown("## ✨ 功能特性")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("### 📖 学习模式")
-        st.markdown("""
-        - 概念讲解与答疑
-        - 教材引用与溯源
-        - 知识点总结
-        - 支持搜索辅助
-        """)
-    
-    with col2:
-        st.markdown("### ✍️ 练习模式")
-        st.markdown("""
-        - 智能出题
-        - 自动评分讲评
-        - 错题本记录
-        - 针对性建议
-        """)
-    
-    with col3:
-        st.markdown("### 📝 考试模式")
-        st.markdown("""
-        - 模拟考试环境
-        - 自动组卷
-        - 考后报告
-        - 薄弱点分析
-        """)
+    st.markdown(HELP_CONTENT, unsafe_allow_html=True)
