@@ -72,16 +72,32 @@ function dlSVG(){{
 function dlPNG(){{
   var el=document.querySelector('#{svg_id} svg');
   if(!el){{alert('图表尚未渲染，请稍等片刻');return;}}
-  var sd=new XMLSerializer().serializeToString(el);
+  // \u4ece viewBox \u8bfb\u53d6\u81ea\u7136\u5206\u8fa8\u7387\uff08Mermaid \u8f93\u51fa\u7684\u771f\u5b9e SVG \u5c3a\u5bf8\uff09
+  var natW=0,natH=0;
+  var vb=el.getAttribute('viewBox');
+  if(vb){{
+    var pts=vb.trim().split(/[\\s,]+/);
+    if(pts.length>=4){{natW=parseFloat(pts[2]);natH=parseFloat(pts[3]);}}
+  }}
+  if(!natW){{natW=parseFloat(el.getAttribute('width'))||1600;}}
+  if(!natH){{natH=parseFloat(el.getAttribute('height'))||900;}}
+  // 3\u00d7 \u8d85\u91c7\u6837\uff0c\u8f93\u51fa\u9ad8\u6e05 PNG
+  var scale=3;
   var c=document.createElement('canvas');
-  var bb=el.getBoundingClientRect();
-  c.width=bb.width||800;c.height=bb.height||600;
+  c.width=Math.round(natW*scale);
+  c.height=Math.round(natH*scale);
   var ctx=c.getContext('2d');
+  // \u514b\u9686 SVG \u5e76\u663e\u5f0f\u8bbe\u7f6e width/height \u4ee5\u786e\u4fdd\u6b63\u786e\u62c9\u4f38
+  var clone=el.cloneNode(true);
+  clone.setAttribute('width',natW);
+  clone.setAttribute('height',natH);
+  var sd=new XMLSerializer().serializeToString(clone);
   var img=new Image();
   img.onload=function(){{
     ctx.fillStyle='white';ctx.fillRect(0,0,c.width,c.height);
-    ctx.drawImage(img,0,0);
-    var a=document.createElement('a');a.href=c.toDataURL('image/png');
+    ctx.scale(scale,scale);
+    ctx.drawImage(img,0,0,natW,natH);
+    var a=document.createElement('a');a.href=c.toDataURL('image/png',1.0);
     a.download='mindmap.png';a.click();
   }};
   img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(sd)));
