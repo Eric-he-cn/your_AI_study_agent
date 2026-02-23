@@ -9,8 +9,9 @@
 ## 速览
 - 🎯 三种模式：学习讲解 / 智能出题+评分 / 模拟考试
 - 📚 RAG：PDF/TXT/MD/DOCX/PPTX/PPT 解析，FAISS 检索，附页码引用
-- 🛠️ 工具：计算器、网页搜索（SerpAPI）、文件写入笔记
-- ⚡ 体验：SSE 流式输出，前端实时渲染
+- 🛠️ 工具：计算器、网页搜索、文件写入、记忆检索、思维导图、日期时间查询（共 6 个 MCP 工具）
+- 🧠 记忆系统：SQLite 跨会话追踪薄弱知识点，自动强化
+- ⚡ 体验：SSE 流式输出，Mermaid 思维导图渲染与 3× 高清 PNG 导出
 - 🔒 安全：路径穿越防护、并发 chdir 加锁、编码回退、分块死循环保护
 
 ---
@@ -19,9 +20,9 @@
 
 | 模式 | 适用场景 | 允许工具 | 自动记录 |
 |------|----------|----------|----------|
-| **学习 (Learn)** | 概念讲解、知识梳理 | 计算器 + 网页搜索 + 文件写入 | 无 |
-| **练习 (Practice)** | 出题、提交答案、评分讲评 | 计算器 + 文件写入 | `practices/` JSON 练习记录 |
-| **考试 (Exam)** | 模拟考试、自测报告 | 仅计算器 | `exams/` JSON 考试记录 |
+| **学习 (Learn)** | 概念讲解、知识梳理 | 计算器 · 网页搜索 · 文件写入 · 记忆检索 · 思维导图 · 查询时间 | 无 |
+| **练习 (Practice)** | 出题、提交答案、评分讲评 | 计算器 · 文件写入 · 记忆检索 · 查询时间 | `practices/` JSON 练习记录 |
+| **考试 (Exam)** | 模拟考试、自测报告 | 计算器 · 查询时间 | `exams/` JSON 考试记录 |
 
 - **学习模式**：基于上传教材进行 RAG 检索，每个结论附带文档来源与页码引用；支持网页搜索补充课外知识。
 - **练习模式**：LLM 自动出题评分，完整对话自动保存为 JSONL 练习记录；禁用网页搜索防止作弊。
@@ -53,9 +54,12 @@ Tutor Agent   QuizMaster     Grader Agent
 
 | 工具 | 功能 |
 |------|------|
-| `calculator` | 数学表达式计算（Python `eval` 沙箱） |
-| `websearch` | SerpAPI 网页搜索（学习模式专用） |
-| `filewriter` | 将笔记写入课程 `notes/` 目录 |
+| `calculator` | 数学表达式计算（支持 `math`/`statistics`/组合数学/双曲函数/单位换算，Python 受限 `eval`） |
+| `websearch` | SerpAPI 网页搜索（仅学习模式） |
+| `filewriter` | 将笔记写入课程 `notes/` 目录（`.md` 格式） |
+| `memory_search` | 检索历史练习/错题记忆，自动强化薄弱知识点 |
+| `mindmap_generator` | 生成 Mermaid 思维导图，支持导出 SVG / 3× 高清 PNG / 源码 |
+| `get_datetime` | 返回当前精确日期、时间、星期，避免 LLM 凭训练数据回答时效性问题 |
 
 ### 实时流式输出
 
@@ -74,7 +78,7 @@ FastAPI (:8000)
     ├─ OrchestrationRunner
     │    ├─ Router Agent   → Plan (是否用 RAG/工具，输出格式)
     │    ├─ Tutor Agent    → 教学回答 + 引用
-+    │    ├─ QuizMaster     → Quiz JSON
+    │    ├─ QuizMaster     → Quiz JSON
     │    └─ Grader Agent   → GradeReport JSON
     │
     ├─ RAG Pipeline
@@ -86,7 +90,10 @@ FastAPI (:8000)
     └─ MCP Tools
          ├─ calculator
          ├─ websearch
-         └─ filewriter
+         ├─ filewriter
+         ├─ memory_search
+         ├─ mindmap_generator
+         └─ get_datetime
 ```
 
 ### Agent 职责
@@ -236,8 +243,11 @@ DELETE /workspaces/{course_name}            # 删除
 
 ### 资料管理
 ```http
-POST   /workspaces/{course_name}/upload      # multipart/form-data 上传
-POST   /workspaces/{course_name}/build-index # 构建 FAISS 索引
+POST   /workspaces/{course_name}/upload               # multipart/form-data 上传
+POST   /workspaces/{course_name}/build-index          # 构建 FAISS 索引
+GET    /workspaces/{course_name}/files                # 文件列表 + 索引状态
+DELETE /workspaces/{course_name}/files/{filename}     # 删除单个文件
+DELETE /workspaces/{course_name}/index                # 删除向量索引
 ```
 
 ### 对话
@@ -292,16 +302,15 @@ SSE 每帧格式：`data: <JSON字符串>\n\n`，需 `json.loads()` 解码。
 - `.ppt` 解析依赖本机安装 Microsoft PowerPoint（通过 COM 转换到 `.pptx`）。
 - 嵌入模型默认 `BAAI/bge-base-zh-v1.5`（中文优化，768 维）；中英混排教材可换 `BAAI/bge-m3`（多语言，更慢）。
 - 更换嵌入模型后需运行 `python rebuild_indexes.py` 重建所有课程索引（维度变化时旧索引不兼容）。
-- 扫描版 PDF（图片）需先 OCR，当前不支持直接提取文字。
-- `.ppt` 解析依赖本机安装 Microsoft PowerPoint（通过 COM 转换到 `.pptx`）。
 - FAISS 在 >100 万向量时性能下降，需考虑分片或 HNSW 方案。
 - 设计为单机部署，多实例需额外处理索引共享与并发写。
-- 设计为单机部署，多实例需额外处理索引共享与并发写。
+- 网页搜索依赖 SerpAPI，未配置 `SERPAPI_API_KEY` 时工具静默跳过。
+- Mermaid 思维导图 PNG 导出在极复杂图表（>50节点）时可能超出浏览器渲染限制。
 
 ---
 
 ## 贡献与许可
 - 欢迎提交 Issue / PR，一起完善功能与安全性。
 - 许可证：MIT License
-- 作者：**Eric He** · 更新日期：2026-02-22
+- 作者：**Eric He** · 更新日期：2026-02-23
 

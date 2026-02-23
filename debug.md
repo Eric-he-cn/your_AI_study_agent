@@ -89,3 +89,39 @@
 - 解决思路：用全局 `threading.Lock` 串行化 `chdir → 操作 → 恢复`。
 - 解决步骤：`store_faiss.py` 顶部定义锁，在 `save()/load()` 的 `chdir` 区域加锁。
 - 解决结果：并发场景索引读写稳定，无目录争用。
+
+## 16. Mermaid 思维导图 PNG 导出分辨率低
+- 发现问题：点击"下载 PNG"导出的图片模糊，实际尺寸与屏幕渲染框一致，远低于预期。
+- 解决思路：`getBoundingClientRect()` 只取 CSS 像素尺寸，受页面缩放影响；应改为读取 SVG 原生 `viewBox`，再以 3× 倍率进行超采样。
+- 解决步骤：前端 Mermaid 下载 JS 改为解析 SVG `viewBox` 取自然宽高，Canvas 以 `width×3`/`height×3` 创建，`drawImage` 填满后按原始尺寸导出 PNG。
+- 解决结果：导出 PNG 清晰度提升约 3 倍，边缘锐利，适合打印。
+
+## 17. 练习模式评分结果未写入记忆库
+- 发现问题：练习结束后 `memory_search` 工具查不到最近错题；对话保存到 `practices/` 文件，但 SQLite 记忆库无新记录。
+- 解决思路：`run_practice_mode_stream` 通过内联 LLM 调用评分，未经过 `GraderAgent`，因此从未调用记忆写入逻辑。
+- 解决步骤：在 `runner.py` 新增 `_save_grading_to_memory()`，用正则提取评分结果中的得分，保存 `practice`/`mistake` episode，并调用 `update_weak_points()` 及 `record_practice_result()`；在 `_is_practice_grading()` 判断为真后调用。
+- 解决结果：练习评分完成后记忆库同步更新，`memory_search` 可检索历史错题。
+
+## 18. 考试模式评分结果未写入记忆库
+- 发现问题：考试模式同样使用内联批改，`exams/` 文件正常保存但记忆库无记录，薄弱知识点不被追踪。
+- 解决思路：与 Bug 17 同源，考试批改结果也绕过了记忆写入。
+- 解决步骤：新增 `_save_exam_to_memory()`，从考试报告文本中提取总分和薄弱知识点，以 `exam` 类型写入 `episodes` 表；在 `_is_exam_grading()` 判定后调用。
+- 解决结果：考试结束后记忆库更新，支持后续针对薄弱点出题。
+
+## 19. runner.py 语法错误导致服务启动失败
+- 发现问题：修改 `runner.py` 后服务无法启动，报 `SyntaxError: unexpected EOF`；`def _is_exam_grading` 方法头部丢失。
+- 解决思路：`multi_replace_string_in_file` 的某次替换匹配范围过大，意外删除了方法定义行。
+- 解决步骤：在 `_is_exam_grading` 方法体上方补回 `def _is_exam_grading(self, text: str) -> bool:` 一行。
+- 解决结果：服务正常启动，语法错误消除。
+
+## 20. 练习模式评分结果不准确（未逐题对照）
+- 发现问题：LLM 以"印象式"对比压缩后的答案字符串，出现同样答案被判错、或错误答案被判对的情况；多选题尤为突出。
+- 解决思路：要求 LLM 在给出评分前必须先逐题输出对照表，再按公式计算得分，避免跳步直接打分。
+- 解决步骤：更新 `prompts.py` 中的 `PRACTICE_PROMPT`，增加"Step-1 强制输出对照表 `| 题号 | 标准答案 | 学生答案 | 结果 |`"规则，在对照表完成后才允许计算总分。
+- 解决结果：评分准确率显著提升，对照表可供用户直观核查。
+
+## 21. FAISS 索引检测逻辑错误（始终认为无索引）
+- 发现问题：侧边栏"文件与索引"面板始终显示"索引未构建"，即使已成功 build-index；"删除索引"按钮无效。
+- 解决思路：FAISS 以平铺文件形式保存为 `{path}.faiss` + `{path}.pkl`，而非目录；原代码用 `os.path.isdir()` 检测必然为 False。
+- 解决步骤：`api.py` 中检测逻辑改为 `os.path.exists(f"{index_path}.faiss")`；删除逻辑改为 `os.remove()` 分别删除两个文件，替换原来的 `shutil.rmtree()`。
+- 解决结果：索引状态正确显示，构建/重建/删除操作均生效。
