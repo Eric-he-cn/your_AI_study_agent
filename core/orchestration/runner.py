@@ -496,6 +496,25 @@ class OrchestrationRunner:
             history=history
         )
 
+        # 流式输出完成后写入情景记忆（异步失败不影响主流程）
+        try:
+            from memory.manager import get_memory_manager
+            mgr = get_memory_manager()
+            doc_ids = [c["doc_id"] for c in citations_dicts] if citations_dicts else []
+            content = f"问题: {user_message}"
+            if doc_ids:
+                content += f"\n参考来源: {', '.join(dict.fromkeys(doc_ids))}"
+            mgr.save_episode(
+                course_name=course_name,
+                event_type="qa",
+                content=content,
+                importance=0.5,
+                metadata={"doc_ids": doc_ids},
+            )
+            mgr.increment_qa_count(course_name)
+        except Exception as _mem_err:
+            print(f"[Memory] 写入情景记忆失败（不影响输出）: {_mem_err}")
+
     def run_stream(
         self,
         course_name: str,

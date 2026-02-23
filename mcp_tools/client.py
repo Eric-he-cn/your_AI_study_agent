@@ -46,6 +46,32 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "memory_search",
+            "description": "在用户的历史问答和错题记录中检索相关内容，避免重复讲解，可了解用户薄弱点。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "检索关键词或问题描述"
+                    },
+                    "course_name": {
+                        "type": "string",
+                        "description": "当前课程名称"
+                    },
+                    "event_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "只检索指定类型：qa/mistake/practice，不传则检索全部"
+                    }
+                },
+                "required": ["query", "course_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "filewriter",
             "description": "将内容写入学习笔记文件，用于保存学习总结、错题记录等。",
             "parameters": {
@@ -182,12 +208,56 @@ class MCPTools:
             }
 
     @staticmethod
+    def memory_search(query: str, course_name: str,
+                      event_types: List[str] = None) -> Dict[str, Any]:
+        """检索用户历史记忆（情景记忆）。"""
+        try:
+            from memory.manager import get_memory_manager
+            mgr = get_memory_manager()
+            episodes = mgr.search_episodes(
+                query=query,
+                course_name=course_name,
+                event_types=event_types,
+                top_k=5,
+            )
+            if not episodes:
+                return {
+                    "tool": "memory_search",
+                    "query": query,
+                    "results": [],
+                    "message": "未找到相关历史记录",
+                    "success": True,
+                }
+            formatted = []
+            for ep in episodes:
+                etype = {"qa": "问答", "mistake": "错题", "practice": "练习",
+                         "exam": "考试"}.get(ep.get("event_type", ""), ep.get("event_type", ""))
+                date_str = ep.get("created_at", "")[:10]
+                flag = "⚠️ " if ep.get("importance", 0) >= 0.8 else ""
+                formatted.append(f"[{date_str} {etype}] {flag}{ep['content'][:200]}")
+            return {
+                "tool": "memory_search",
+                "query": query,
+                "results": formatted,
+                "count": len(formatted),
+                "success": True,
+            }
+        except Exception as ex:
+            return {"tool": "memory_search", "error": str(ex), "success": False}
+
+    @staticmethod
     def call_tool(tool_name: str, **kwargs) -> Dict[str, Any]:
         """按名称调用工具。"""
         if tool_name == "calculator":
             return MCPTools.calculator(kwargs.get("expression", ""))
         elif tool_name == "websearch":
             return MCPTools.websearch(kwargs.get("query", ""))
+        elif tool_name == "memory_search":
+            return MCPTools.memory_search(
+                query=kwargs.get("query", ""),
+                course_name=kwargs.get("course_name", ""),
+                event_types=kwargs.get("event_types"),
+            )
         elif tool_name == "filewriter":
             notes_dir = MCPTools._context.get("notes_dir", "./data/notes")
             return MCPTools.filewriter(
