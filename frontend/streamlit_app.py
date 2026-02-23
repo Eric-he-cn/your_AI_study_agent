@@ -118,27 +118,40 @@ MODE_THEME = {
 }
 
 def inject_mode_css(mode: str) -> None:
-    """根据学习模式注入主题背景色。"""
+    """注入全局样式（不改主背景色，保持灰白协调）。"""
     c = MODE_THEME.get(mode, MODE_THEME["learn"])
     st.markdown(f"""<style>
-[data-testid="stAppViewContainer"] > .main {{
-    background-color: {c["bg"]};
-    transition: background-color 0.4s ease;
-}}
+/* 侧边栏保持浅灰 */
 [data-testid="stSidebar"] {{
-    background-color: #F2F3F4 !important;
+    background-color: #F4F6F8 !important;
 }}
+/* 模式标签胶囊 */
 .mode-pill {{
-    display:inline-block; padding:5px 16px; border-radius:20px;
+    display:inline-block; padding:4px 14px; border-radius:20px;
     background:{c["pill"]}; color:{c["accent"]}; font-weight:700;
-    font-size:0.92rem; border:1px solid {c["accent"]}55; letter-spacing:.3px;
+    font-size:0.88rem; border:1px solid {c["accent"]}66;
+    vertical-align:middle;
 }}
+/* 对话区左侧模式指示条 */
+.mode-bar {{
+    border-left: 5px solid {c["accent"]};
+    background: {c["pill"]}66;
+    border-radius: 0 8px 8px 0;
+    padding: 8px 16px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: {c["accent"]};
+    font-weight: 600;
+    font-size: 0.95rem;
+}}
+/* 帮助面板 */
 .help-section {{
     background:#fff; border:1px solid #DEE2E6; border-radius:12px;
     padding:22px 24px; line-height:1.75; margin-bottom:12px;
 }}
 .help-section h3 {{ color:{c["accent"]}; margin-top:1rem; }}
-.file-row {{ display:flex; align-items:center; gap:8px; padding:4px 0; }}
 </style>""", unsafe_allow_html=True)
 
 # ── 帮助面板内容 ──────────────────────────────────────────────────────────────
@@ -506,12 +519,6 @@ if st.session_state.current_course:
             f'<span class="mode-pill">{c["label"]}</span>',
             unsafe_allow_html=True,
         )
-        mode_tips = {
-            "learn":    "💡 提问知识点、要求生成思维导图、保存笔记",
-            "practice": "✍️ 指定题型和知识点，提交答案后自动评分",
-            "exam":     "📝 配置考试 → 收到试卷 → 一次性提交全部答案",
-        }
-        st.caption(mode_tips[st.session_state.current_mode])
     with col_btns:
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
@@ -524,7 +531,7 @@ if st.session_state.current_course:
 
     # ── 帮助面板（可折叠） ───────────────────────────────────────────────────
     if st.session_state.show_help:
-        inject_mode_css(st.session_state.current_mode)  # 确保 CSS 在组件前渲染
+
         st.markdown(HELP_CONTENT, unsafe_allow_html=True)
         if st.button("✖ 关闭帮助"):
             st.session_state.show_help = False
@@ -532,9 +539,19 @@ if st.session_state.current_course:
 
     st.markdown("---")
 
-    # Chat interface
-    st.subheader("💬 对话区")
-    
+    # ── 对话区模式指示条 ──────────────────────────────────────────────────────
+    mode_bar_info = {
+        "learn":    ("📖", "学习模式", "提问知识点 · 生成思维导图 · 保存笔记"),
+        "practice": ("✍️", "练习模式", "指定题型和知识点 · 提交答案后自动评分"),
+        "exam":     ("📝", "考试模式", "配置考试 → 收到试卷 → 一次性提交全部答案"),
+    }
+    icon, label, tip = mode_bar_info[st.session_state.current_mode]
+    st.markdown(
+        f'<div class="mode-bar">{icon} <span>{label}</span>'
+        f'<span style="font-weight:400;font-size:0.82rem;opacity:0.8;margin-left:8px">· {tip}</span></div>',
+        unsafe_allow_html=True,
+    )
+
     # Display chat history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
