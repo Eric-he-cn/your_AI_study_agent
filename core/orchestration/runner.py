@@ -236,6 +236,7 @@ class OrchestrationRunner:
         # 批改阶段自动保存记录
         if self._is_exam_grading(response_text):
             saved_path = self._save_exam_record(course_name, user_message, history, response_text)
+            self._save_exam_to_memory(course_name, response_text)
             response_text += f"\n\n---\n📁 **本次考试记录已保存至**：`{saved_path}`"
 
         return ChatMessage(
@@ -288,6 +289,7 @@ class OrchestrationRunner:
         full_response = "".join(collected)
         if self._is_exam_grading(full_response):
             saved_path = self._save_exam_record(course_name, user_message, history, full_response)
+            self._save_exam_to_memory(course_name, full_response)
             yield f"\n\n---\n📁 **本次考试记录已保存至**：`{saved_path}`"
 
     def _save_mistake(
