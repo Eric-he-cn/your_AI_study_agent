@@ -6,9 +6,9 @@ class ToolPolicy:
     """Define tool access policy for different modes."""
     
     MODE_POLICIES = {
-        "learn":    ["calculator", "websearch", "filewriter", "memory_search", "mindmap_generator"],
-        "practice": ["calculator", "filewriter", "memory_search"],
-        "exam":     ["calculator"]
+        "learn":    ["calculator", "websearch", "filewriter", "memory_search", "mindmap_generator", "get_datetime"],
+        "practice": ["calculator", "filewriter", "memory_search", "get_datetime"],
+        "exam":     ["calculator", "get_datetime"]
     }
     
     @staticmethod

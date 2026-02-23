@@ -115,6 +115,30 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_datetime",
+            "description": (
+                "获取当前的日期、时间和星期信息。以下情况必须调用本工具，不得凭记忆或猜测：\n"
+                "① 用户询问'今天是几号'、'现在几点'、'今天星期几'等\n"
+                "② 判断某事件是否已经过期、是否在有效期内\n"
+                "③ 计算距离某日期还有多少天（先获取当前日期再计算）\n"
+                "④ 任何需要'当前时间'作为参考的问题\n"
+                "本工具无需参数，直接调用即可。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": "时区名称，默认为系统本地时区。可选值如 'Asia/Shanghai'、'UTC' 等"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "filewriter",
             "description": "将内容写入学习笔记文件，用于保存学习总结、错题记录等。",
             "parameters": {
@@ -235,6 +259,34 @@ class MCPTools:
                 "error": str(ex),
                 "success": False
             }
+
+    @staticmethod
+    def get_datetime(timezone: str = None) -> Dict[str, Any]:
+        """返回当前日期、时间、星期及时区信息。"""
+        from datetime import datetime as _dt
+        import zoneinfo as _zi
+        try:
+            if timezone:
+                try:
+                    tz = _zi.ZoneInfo(timezone)
+                except Exception:
+                    tz = None
+            else:
+                tz = None
+            now = _dt.now(tz=tz) if tz else _dt.now()
+            weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+            return {
+                "tool": "get_datetime",
+                "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "date": now.strftime("%Y年%m月%d日"),
+                "time": now.strftime("%H:%M:%S"),
+                "weekday": weekdays[now.weekday()],
+                "timezone": str(now.tzinfo) if now.tzinfo else "本地时区",
+                "timestamp": int(now.timestamp()),
+                "success": True,
+            }
+        except Exception as ex:
+            return {"tool": "get_datetime", "error": str(ex), "success": False}
 
     @staticmethod
     def websearch(query: str) -> Dict[str, Any]:
@@ -425,6 +477,8 @@ class MCPTools:
                 course_name=kwargs.get("course_name", ""),
                 extra_context=kwargs.get("extra_context", ""),
             )
+        elif tool_name == "get_datetime":
+            return MCPTools.get_datetime(kwargs.get("timezone"))
         elif tool_name == "filewriter":
             notes_dir = MCPTools._context.get("notes_dir", "./data/notes")
             return MCPTools.filewriter(
