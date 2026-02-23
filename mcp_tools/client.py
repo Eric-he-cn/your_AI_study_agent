@@ -2,6 +2,7 @@
 import json
 import os
 import math
+import statistics
 import requests
 from typing import Dict, Any, List
 
@@ -13,13 +14,30 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "calculator",
-            "description": "计算数学表达式，支持加减乘除、幂运算、三角函数、对数等。",
+            "description": (
+                "计算各类数学表达式，以下场景必须调用本工具，不得心算：\n"
+                "① 算术/代数：2**10、(3+5)*7、sqrt(2)、abs(-3)\n"
+                "② 三角函数：sin(pi/6)、cos(deg2rad(45))、atan2(1,1)、tanh(0.5)\n"
+                "③ 对数/指数：log(1000,10)、log2(64)、exp(3)\n"
+                "④ 取整/舍入：floor(3.7)、ceil(3.2)、round(3.145,2)、trunc(9.9)\n"
+                "⑤ 组合数学：comb(10,3)→C(10,3)=120，perm(5,2)→P(5,2)=20，factorial(10)\n"
+                "⑥ 数论：gcd(48,18)、lcm(12,15)\n"
+                "⑦ 几何辅助：hypot(3,4)→两点距离，atan2(y,x)→反正切\n"
+                "⑧ 统计（传列表）：mean([1,2,3])、median([…])、stdev([…])、variance([…])\n"
+                "⑨ 常数：pi、e、tau(=2π)、inf\n"
+                "⑩ 角度换算：deg2rad(90)→弧度，rad2deg(pi)→角度\n"
+                "只要涉及数值计算，优先调用本工具，不要自己估算。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "expression": {
                         "type": "string",
-                        "description": "要计算的数学表达式，例如 '2**10'、'sin(3.14/2)'、'log(100, 10)'"
+                        "description": (
+                            "合法的 Python 数学表达式字符串。"
+                            "示例：'comb(10,3)'、'mean([85,90,78,92])'、"
+                            "'sqrt(3**2+4**2)'、'round(log(1024,2),4)'"
+                        )
                     }
                 },
                 "required": ["expression"]
@@ -151,22 +169,63 @@ class MCPTools:
 
     @staticmethod
     def calculator(expression: str) -> Dict[str, Any]:
-        """安全地计算数学表达式。"""
+        """安全地计算数学表达式，支持统计、组合数学、三角等扩展函数。"""
         try:
+            # 统计函数（接受列表）
+            def _mean(data): return statistics.mean(data)
+            def _median(data): return statistics.median(data)
+            def _stdev(data): return statistics.stdev(data)
+            def _variance(data): return statistics.variance(data)
+            def _pstdev(data): return statistics.pstdev(data)
+            def _pvariance(data): return statistics.pvariance(data)
+            def _mode(data): return statistics.mode(data)
+
             safe_globals = {
                 "__builtins__": {},
+                # 基础三角
                 "sin": math.sin, "cos": math.cos, "tan": math.tan,
                 "asin": math.asin, "acos": math.acos, "atan": math.atan,
-                "sqrt": math.sqrt, "log": math.log, "log10": math.log10,
-                "log2": math.log2, "exp": math.exp, "abs": abs,
-                "pi": math.pi, "e": math.e, "pow": math.pow,
-                "floor": math.floor, "ceil": math.ceil, "round": round,
+                "atan2": math.atan2,
+                # 双曲三角
+                "sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
+                "asinh": math.asinh, "acosh": math.acosh, "atanh": math.atanh,
+                # 角度/弧度互转
+                "deg2rad": math.radians, "rad2deg": math.degrees,
+                "radians": math.radians, "degrees": math.degrees,
+                # 幂/对数/指数
+                "sqrt": math.sqrt, "exp": math.exp, "pow": math.pow,
+                "log": math.log, "log10": math.log10, "log2": math.log2,
+                # 取整/舍入
+                "abs": abs, "floor": math.floor, "ceil": math.ceil,
+                "round": round, "trunc": math.trunc,
+                # 组合数学
+                "factorial": math.factorial,
+                "comb": math.comb,   # C(n,k) = nCr
+                "perm": math.perm,   # P(n,k) = nPr
+                "gcd": math.gcd, "lcm": math.lcm,
+                # 几何/向量
+                "hypot": math.hypot,
+                "fmod": math.fmod, "remainder": math.remainder,
+                # 统计
+                "mean": _mean, "median": _median,
+                "stdev": _stdev, "variance": _variance,
+                "pstdev": _pstdev, "pvariance": _pvariance,
+                "mode": _mode,
+                # 常数
+                "pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf,
+                # 内置集合/聚合
+                "sum": sum, "min": min, "max": max, "len": len, "list": list,
             }
             result = eval(expression, safe_globals, {})
+            # 浮点数保留合理精度
+            if isinstance(result, float):
+                display = round(result, 10)
+            else:
+                display = result
             return {
                 "tool": "calculator",
                 "expression": expression,
-                "result": result,
+                "result": display,
                 "success": True
             }
         except Exception as ex:
