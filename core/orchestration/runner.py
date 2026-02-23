@@ -390,7 +390,8 @@ class OrchestrationRunner:
             print(f"[Memory] 练习{'错题' if is_mistake else '结果'}已记录，得分={score:.0f}")
         except Exception as _e:
             print(f"[Memory] 练习记忆写入失败（不影响评分）: {_e}")
-(self, text: str) -> bool:
+
+    def _is_exam_grading(self, text: str) -> bool:
         """判断考试模式回复是否为批改阶段。"""
         keywords = ["批改报告", "逐题详批", "评分总表", "总得分", "总分", "考后建议", "薄弱知识点"]
         return sum(1 for kw in keywords if kw in text) >= 2
