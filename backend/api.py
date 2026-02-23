@@ -197,13 +197,13 @@ async def list_workspace_files(course_name: str):
                     "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                 })
 
-    # 索引状态：目录存在且非空即视为已建立
-    index_built = os.path.isdir(index_path) and bool(os.listdir(index_path))
+    # 索引状态：FAISS 实际存储为 faiss_index.faiss + faiss_index.pkl 两个平文件
+    index_built = os.path.exists(f"{index_path}.faiss")
     index_mtime = None
     if index_built:
         try:
-            mtimes = [os.stat(os.path.join(index_path, f)).st_mtime
-                      for f in os.listdir(index_path)]
+            mtimes = [os.stat(f).st_mtime for f in [f"{index_path}.faiss", f"{index_path}.pkl"]
+                      if os.path.exists(f)]
             if mtimes:
                 index_mtime = datetime.fromtimestamp(max(mtimes)).strftime("%Y-%m-%d %H:%M")
         except Exception:
@@ -236,9 +236,13 @@ async def delete_workspace_index(course_name: str):
     if course_name not in workspaces:
         raise HTTPException(status_code=404, detail="Workspace not found")
     index_path = os.path.abspath(workspaces[course_name].index_path)
-    if not os.path.isdir(index_path):
+    faiss_file = f"{index_path}.faiss"
+    pkl_file = f"{index_path}.pkl"
+    if not os.path.exists(faiss_file):
         raise HTTPException(status_code=404, detail="索引不存在")
-    shutil.rmtree(index_path)
+    for f in [faiss_file, pkl_file]:
+        if os.path.exists(f):
+            os.remove(f)
     return {"message": "索引已删除"}
 
 
