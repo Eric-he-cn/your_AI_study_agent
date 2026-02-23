@@ -137,6 +137,7 @@ class OrchestrationRunner:
         # 评分阶段自动保存记录
         if self._is_practice_grading(response_text):
             saved_path = self._save_practice_record(course_name, user_message, history, response_text)
+            self._save_grading_to_memory(course_name, user_message, history, response_text)
             response_text += f"\n\n---\n📁 **本题记录已保存至**：`{saved_path}`"
 
         return ChatMessage(
@@ -190,6 +191,7 @@ class OrchestrationRunner:
         full_response = "".join(collected)
         if self._is_practice_grading(full_response):
             saved_path = self._save_practice_record(course_name, user_message, history, full_response)
+            self._save_grading_to_memory(course_name, user_message, history, full_response)
             yield f"\n\n---\n📁 **本题记录已保存至**：`{saved_path}`"
 
     
@@ -324,7 +326,69 @@ class OrchestrationRunner:
         keywords = ["评分结果", "标准解析", "易错提醒", "得分", "答对的部分", "需要改进"]
         return sum(1 for kw in keywords if kw in text) >= 2
 
-    def _is_exam_grading(self, text: str) -> bool:
+    def _save_grading_to_memory(
+        self,
+        course_name: str,
+        user_answer: str,
+        history: list,
+        response_text: str,
+    ) -> None:
+        """将练习评分结果写入情景记忆（供弱点分析和 memory_search 使用）。"""
+        try:
+            import re as _re
+            from memory.manager import get_memory_manager
+
+            # 提取题目（历史中最近一条 assistant 消息）
+            question = "（未能提取题目）"
+            for msg in reversed(history[-20:]):
+                if msg.get("role") == "assistant":
+                    question = msg.get("content", "")[:300]
+                    break
+
+            # 从评分回复中提取数字得分（支持：得分：80、80/100、80分 等格式）
+            score = 60.0  # 默认中等分，触发 mistake 判断
+            m = _re.search(r"得分[：:＝=]\s*([0-9]+(?:\.[0-9]+)?)", response_text)
+            if m:
+                score = float(m.group(1))
+            else:
+                # 兼容 "80/100" 格式
+                m2 = _re.search(r"([0-9]+(?:\.[0-9]+)?)\s*/\s*100", response_text)
+                if m2:
+                    score = float(m2.group(1))
+
+            is_mistake = score < 60
+            importance = 0.9 if is_mistake else 0.4
+            event_type = "mistake" if is_mistake else "practice"
+            content = (
+                f"题目: {question}\n"
+                f"学生答案: {user_answer[:200]}\n"
+                f"得分: {score:.0f}"
+            )
+
+            # 尝试提取错误标签（"易错提醒" 或 "错误类型" 后的文字）
+            mistake_tags: list[str] = []
+            tag_m = _re.search(r"[易错提醒错误类型]{2,}[：:]\s*(.+?)(?:\n|$)", response_text)
+            if tag_m:
+                raw = tag_m.group(1).strip()
+                mistake_tags = [t.strip() for t in _re.split(r"[,，、；;]", raw) if t.strip()][:5]
+            if mistake_tags:
+                content += f"\n错误类型: {', '.join(mistake_tags)}"
+
+            mgr = get_memory_manager()
+            mgr.save_episode(
+                course_name=course_name,
+                event_type=event_type,
+                content=content,
+                importance=importance,
+                metadata={"score": score, "tags": mistake_tags},
+            )
+            if mistake_tags and is_mistake:
+                mgr.update_weak_points(course_name, mistake_tags)
+            mgr.record_practice_result(course_name, score, is_mistake)
+            print(f"[Memory] 练习{'错题' if is_mistake else '结果'}已记录，得分={score:.0f}")
+        except Exception as _e:
+            print(f"[Memory] 练习记忆写入失败（不影响评分）: {_e}")
+(self, text: str) -> bool:
         """判断考试模式回复是否为批改阶段。"""
         keywords = ["批改报告", "逐题详批", "评分总表", "总得分", "总分", "考后建议", "薄弱知识点"]
         return sum(1 for kw in keywords if kw in text) >= 2
