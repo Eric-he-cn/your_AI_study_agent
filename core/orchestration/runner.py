@@ -325,7 +325,7 @@ class OrchestrationRunner:
 
     def _is_practice_grading(self, text: str) -> bool:
         """判断练习模式回复是否为评分阶段。"""
-        keywords = ["评分结果", "标准解析", "易错提醒", "得分", "答对的部分", "需要改进"]
+        keywords = ["评分结果", "标准解析", "易错提醒", "得分", "答对的部分", "需要改进", "逐题核对", "标准答案", "学生答案"]
         return sum(1 for kw in keywords if kw in text) >= 2
 
     def _save_grading_to_memory(
