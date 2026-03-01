@@ -202,7 +202,7 @@ HELP_CONTENT = """
 
 
 st.set_page_config(
-    page_title="课程学习助手",
+    page_title="CoursePilot",
     page_icon="📚",
     layout="wide"
 )
@@ -368,7 +368,31 @@ def stream_chat(course_name: str, mode: str, message: str):
 
 
 # Main UI
-st.title("📚 课程学习助手")
+st.markdown("""
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.2rem;">
+  <h1 style="margin:0; font-size:2rem;">📚 CoursePilot — 你的课程学习 AI 助手</h1>
+  <a href="https://github.com/Eric-he-cn/your_AI_study_agent" target="_blank"
+     style="display:flex; align-items:center; gap:6px; text-decoration:none;
+            color:#24292f; background:#f6f8fa; border:1px solid #d0d7de;
+            border-radius:6px; padding:6px 12px; font-size:0.85rem; white-space:nowrap;">
+    <svg height="18" viewBox="0 0 16 16" width="18" fill="currentColor">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+               0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+               -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+               .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+               -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27
+               .68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12
+               .51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48
+               0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+    </svg>
+    Eric He / CoursePilot
+  </a>
+</div>
+<p style="color:#666; margin:0.2rem 0 0.6rem 0; font-size:0.97rem;">
+  将课程教材接入 RAG 知识库，三种模式闭环（学习→练习→考试），
+  多 Agent 协同 + 多 个 MCP 工具支撑，跨会话记忆追踪薄弱知识点，让大学生更高效地掌握课程内容。
+</p>
+""", unsafe_allow_html=True)
 st.markdown("---")
 
 # Sidebar
@@ -479,7 +503,10 @@ with st.sidebar:
         # ── 索引状态 ─────────────────────────────────
         st.markdown("**🗂 索引状态**")
         if index_built:
-            st.success(f"索引已建立（{index_mtime or '时间未知'}）")
+            st.markdown(
+                f"<span style='color:#555; font-size:0.88rem;'>✅ 索引已建立（{index_mtime or '时间未知'}）</span>",
+                unsafe_allow_html=True
+            )
             col_b, col_d = st.columns(2)
             with col_b:
                 if st.button("🔨 重建索引", use_container_width=True):
